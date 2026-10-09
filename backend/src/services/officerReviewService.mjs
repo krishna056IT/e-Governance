@@ -5,6 +5,7 @@ import Document from '../models/Document.mjs'
 import User from '../models/User.mjs'
 import { recordApplicationStatusTransition } from './applicationLifecycleService.mjs'
 import { readExtractedText } from './documentStorage.mjs'
+import { completeStaffTask, getStaffTask } from './staffTaskService.mjs'
 
 const reviewStatuses = ['OFFICER_REVIEW', 'ASSIGNED', 'UNDER_REVIEW']
 const decisionStatuses = new Set(['APPROVED', 'REJECTED', 'ESCALATED'])
@@ -103,7 +104,7 @@ function serializeReviewNote(note, officerNames) {
 }
 
 export async function serializeOfficerApplication(application, documents = []) {
-  const [applicant, department, assignedOfficer] = await Promise.all([
+  const [applicant, department, assignedOfficer, staffTask] = await Promise.all([
     User.findById(application.applicantId)
       .select('_id displayName email')
       .lean(),
@@ -114,6 +115,9 @@ export async function serializeOfficerApplication(application, documents = []) {
       ? User.findById(application.assignedOfficerId)
         .select('_id displayName governmentOfficerId')
         .lean()
+      : null,
+    application.assignedOfficerId
+      ? getStaffTask('OFFICER_APPLICATION', application._id, application.assignedOfficerId)
       : null,
   ])
   const notes = application.officerReview?.notes || []
@@ -132,7 +136,6 @@ export async function serializeOfficerApplication(application, documents = []) {
     applicant: applicant
       ? { id: String(applicant._id), name: applicant.displayName, email: applicant.email }
       : null,
-    applicationType: application.applicationType,
     title: application.applicationData.title,
     applicantName: application.applicationData.applicantName,
     contactEmail: application.applicationData.contactEmail,
@@ -145,8 +148,16 @@ export async function serializeOfficerApplication(application, documents = []) {
     createdAt: application.createdAt,
     updatedAt: application.updatedAt,
     submittedAt: application.submittedAt,
-    deadlineAt: null,
-    breachedAt: null,
+    deadlineAt: staffTask?.dueAt || null,
+    breachedAt: staffTask && ['OVERDUE', 'COMPLETED_OVERDUE', 'REASSIGNED_OVERDUE'].includes(staffTask.status)
+      ? staffTask.dueAt
+      : null,
+    deadlineRemainingMs: staffTask?.status === 'ASSIGNED'
+      ? Math.max(0, staffTask.dueAt.getTime() - Date.now())
+      : null,
+    staffTaskStatus: staffTask?.status || null,
+    taskAssignedAt: staffTask?.assignedAt || null,
+    taskCompletedAt: staffTask?.completedAt || null,
     documents,
     timeline: [
       {
@@ -336,6 +347,12 @@ export async function decideOfficerReview({
   if (!updated) {
     throw requestError('The application is no longer under review.', 409)
   }
+  await completeStaffTask({
+    taskType: 'OFFICER_APPLICATION',
+    applicationId: application._id,
+    staffId: officer.id,
+    completedAt: now,
+  })
   await recordApplicationStatusTransition({
     applicationId: application._id,
     previousStatus: 'UNDER_REVIEW',

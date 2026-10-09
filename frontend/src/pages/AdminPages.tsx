@@ -5,7 +5,15 @@ import { AdminPageLoading } from '../components/admin/AdminPrimitives'
 import { ErrorState, PageHeader } from '../components/ui'
 import { adminService } from '../services/adminService'
 import type { DepartmentRecord, OfficerRegistrationRecord, UserRecord } from '../types'
-import type { AccountFilter, AdminOverview, DepartmentForm, StaffForm } from '../types/admin'
+import type {
+  AccountFilter,
+  AdminDemerit,
+  AdminOverview,
+  AdminStaffTask,
+  AdminStaffTaskHistory,
+  DepartmentForm,
+  StaffForm,
+} from '../types/admin'
 import { isStaffRole } from '../types/admin'
 import { AdminDashboardHome } from './AdminDashboardHome'
 import { AdminDepartments } from './AdminDepartments'
@@ -24,13 +32,15 @@ const emptyStaffForm: StaffForm = {
 const emptyDepartmentForm: DepartmentForm = { name: '', code: '', description: '', isActive: true }
 
 async function fetchAdminData() {
-  const [overview, departments, users, officerRegistrations] = await Promise.all([
+  const [overview, departments, users, officerRegistrations, overdueDemerits, staffTasks] = await Promise.all([
     adminService.getOverview(),
     adminService.listDepartments(),
     adminService.listUsers(),
     adminService.listOfficerRegistrations(),
+    adminService.listDemerits(),
+    adminService.listStaffTasks(),
   ])
-  return { overview, departments, users, officerRegistrations }
+  return { overview, departments, users, officerRegistrations, overdueDemerits, staffTasks }
 }
 
 export function AdminDashboardPage() {
@@ -45,6 +55,9 @@ export function AdminDashboardPage() {
   const [departments, setDepartments] = useState<DepartmentRecord[]>([])
   const [users, setUsers] = useState<UserRecord[]>([])
   const [officerRegistrations, setOfficerRegistrations] = useState<OfficerRegistrationRecord[]>([])
+  const [overdueDemerits, setOverdueDemerits] = useState<AdminDemerit[]>([])
+  const [staffTasks, setStaffTasks] = useState<AdminStaffTask[]>([])
+  const [taskHistory, setTaskHistory] = useState<AdminStaffTaskHistory | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -74,6 +87,8 @@ export function AdminDashboardPage() {
       setDepartments(data.departments)
       setUsers(data.users)
       setOfficerRegistrations(data.officerRegistrations)
+      setOverdueDemerits(data.overdueDemerits)
+      setStaffTasks(data.staffTasks)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Please try again.')
     } finally {
@@ -90,6 +105,8 @@ export function AdminDashboardPage() {
         setDepartments(data.departments)
         setUsers(data.users)
         setOfficerRegistrations(data.officerRegistrations)
+        setOverdueDemerits(data.overdueDemerits)
+        setStaffTasks(data.staffTasks)
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'Please try again.')
@@ -302,6 +319,47 @@ export function AdminDashboardPage() {
     return adminService.getOfficerRegistration(registrationId)
   }
 
+  async function inspectStaffTask(taskId: string) {
+    if (!taskId) {
+      setTaskHistory(null)
+      return
+    }
+    try {
+      setTaskHistory(await adminService.getStaffTaskHistory(taskId))
+    } catch (reason) {
+      setActionMessage(reason instanceof Error ? reason.message : 'Unable to load staff task history.')
+      setActionMessageIsError(true)
+    }
+  }
+
+  async function extendStaffTask(task: AdminStaffTask) {
+    const daysInput = window.prompt('Additional calendar days (positive whole number):', '3')
+    if (daysInput === null) return
+    const additionalDays = Number(daysInput)
+    if (!Number.isSafeInteger(additionalDays) || additionalDays < 1) {
+      setActionMessage('Enter a positive whole-number calendar day extension.')
+      setActionMessageIsError(true)
+      return
+    }
+    const reason = window.prompt('Reason for extending this deadline (required):')
+    if (reason === null) return
+    if (!reason.trim()) {
+      setActionMessage('A reason is required to extend a deadline.')
+      setActionMessageIsError(true)
+      return
+    }
+    try {
+      await adminService.extendStaffTask(task.id, additionalDays, reason.trim())
+      setActionMessage(`Deadline extended for ${task.staffName}.`)
+      setActionMessageIsError(false)
+      await load()
+      setTaskHistory(await adminService.getStaffTaskHistory(task.id))
+    } catch (cause) {
+      setActionMessage(cause instanceof Error ? cause.message : 'Unable to extend this deadline.')
+      setActionMessageIsError(true)
+    }
+  }
+
   async function approveOfficer(registration: OfficerRegistrationRecord) {
     const roleName = registration.role === 'GENERAL_OFFICER'
       ? 'General Officer'
@@ -410,10 +468,15 @@ export function AdminDashboardPage() {
               overview={overview}
               departments={departments}
               staffUsers={staffUsers}
+              overdueDemerits={overdueDemerits}
+              staffTasks={staffTasks}
+              taskHistory={taskHistory}
               activeDepartmentCount={activeDepartments.length}
               actionMessage={actionMessage}
               actionMessageIsError={actionMessageIsError}
               onChangeSection={changeSection}
+              onInspectTask={(taskId) => void inspectStaffTask(taskId)}
+              onExtendTask={(task) => void extendStaffTask(task)}
             />
           )}
           {section === 'departments' && (

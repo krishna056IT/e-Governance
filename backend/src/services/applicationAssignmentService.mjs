@@ -4,6 +4,7 @@ import Application from '../models/Application.mjs'
 import Department from '../models/Department.mjs'
 import User from '../models/User.mjs'
 import { recordApplicationStatusTransition } from './applicationLifecycleService.mjs'
+import { assignStaffTask } from './staffTaskService.mjs'
 
 const ASSIGNMENT_LOCK_LEASE_MS = 120_000
 const ASSIGNMENT_LOCK_WAIT_MS = 15_000
@@ -226,6 +227,15 @@ async function assignApplicationWhileLocked(
     { new: true, runValidators: true },
   ).lean()
   if (!updated) throw requestError('This application was updated by another reviewer.', 409)
+  if (selectedOfficer) {
+    await assignStaffTask({
+      taskType: 'OFFICER_APPLICATION',
+      applicationId: updated._id,
+      staffId: selectedOfficer._id,
+      staffRole: 'OFFICER',
+      assignedAt,
+    })
+  }
 
   const previousStatus = retryWaiting
     ? application.status

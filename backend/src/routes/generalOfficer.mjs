@@ -85,7 +85,6 @@ router.post('/submissions', (req, res, next) => {
     if (!req.file) return res.status(400).json({ error: 'A document file is required.' })
     const documentLabel = uploadedDocumentLabel(req.file)
     application = await createApplicantApplication(req.user, {
-      applicationType: req.body?.applicationType || documentLabel,
       title: req.body?.title || documentLabel,
       applicantName: req.body?.applicantName || 'Not identified in document',
       contactEmail: req.body?.contactEmail || req.user.email,
@@ -113,10 +112,9 @@ router.post('/submissions', (req, res, next) => {
     if (!applicantName && storedDocument?.extractedTextStorageId) {
       applicantName = extractApplicantName(await readExtractedText(storedDocument.extractedTextStorageId))
     }
-    const persistedValues = {
-      applicationType: storedDocument?.classification?.documentType?.trim() || submitted.applicationType,
-      ...(applicantName ? { 'applicationData.applicantName': applicantName } : {}),
-    }
+    const persistedValues = applicantName
+      ? { 'applicationData.applicantName': applicantName }
+      : {}
     if (storedDocument?.classification?.documentType?.trim()) {
       persistedValues['applicationData.title'] = storedDocument.classification.documentType.trim()
     }
@@ -129,7 +127,6 @@ router.post('/submissions', (req, res, next) => {
     return res.status(201).json({
       application: persistedApplication,
       receipt: {
-        applicationType: persistedApplication.applicationType,
         applicationId: persistedApplication.id,
         applicantName: persistedApplication.applicantName,
       },

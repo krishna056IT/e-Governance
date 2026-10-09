@@ -58,6 +58,7 @@ test('classification and insufficient-text reasons have exact verifier messages'
   }
   const expected = [
     ['AI_CLASSIFICATION_FAILED', 'AI document classification could not be completed.'],
+    ['AI_EXTRACTION_FAILED', 'Structured document extraction could not be completed.'],
     ['UNKNOWN_DEPARTMENT', 'Department could not be determined automatically.'],
     ['INVALID_AI_CLASSIFICATION', 'Automatic department classification returned an unrecognized result.'],
     ['INSUFFICIENT_OCR_TEXT', 'OCR completed but insufficient text was extracted.'],

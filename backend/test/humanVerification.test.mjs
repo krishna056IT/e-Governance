@@ -108,7 +108,6 @@ async function createVerificationDocument({
   const applicant = testUsers[1]
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
     applicationData: {
       title: `Verification test ${testApplications.length + 1}`,
       applicantName: 'Test Applicant',

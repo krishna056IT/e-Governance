@@ -2,7 +2,6 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 export interface PublicApplicationStatus {
   id: string
-  applicationType: string
   status: string
   submittedAt: string | null
   updatedAt: string

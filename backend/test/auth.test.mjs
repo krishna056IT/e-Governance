@@ -123,7 +123,6 @@ test('public status lookup returns only tracking details by email or Application
   const registration = await registrationResponse.json()
   const application = await Application.create({
     applicantId: registration.user.id,
-    applicationType: 'Residence Certificate',
     applicationData: {
       title: 'Status access test',
       applicantName: 'Test Applicant',

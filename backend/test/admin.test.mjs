@@ -182,7 +182,6 @@ test('Admin can retry assignment for a waiting application using its resolved de
   })
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Waiting assignment retry',
     applicationData: {
       title: 'Waiting for an eligible Officer',
       applicantName: applicant.displayName,
@@ -439,7 +438,6 @@ test('department listing reports officer and pending application counts', async 
   })
   await Application.create(['ASSIGNED', 'UNDER_REVIEW'].map((status) => ({
     applicantId: applicant._id,
-    applicationType: 'Department workload check',
     applicationData: {
       title: `Workload ${status}`,
       applicantName: applicant.displayName,
@@ -719,7 +717,6 @@ test('department deactivation preserves existing officer and application relatio
   const applicant = await createApplicantUser(`department-applicant-${runId}@example.test`)
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Department relationship check',
     applicationData: {
       title: 'Existing department application',
       applicantName: applicant.displayName,

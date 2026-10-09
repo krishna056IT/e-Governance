@@ -24,6 +24,12 @@ import {
   rejectOfficerRegistration,
 } from '../services/officerRegistrationService.mjs'
 import { retryWaitingApplicationAssignment } from '../services/applicationAssignmentService.mjs'
+import {
+  extendStaffTaskDeadline,
+  getStaffTaskHistory,
+  listAdminStaffTasks,
+  listDemerits,
+} from '../services/staffTaskService.mjs'
 
 const router = Router()
 router.use(requireAuth, requireRole('ADMIN'))
@@ -48,6 +54,48 @@ router.get('/users', requirePermission('USER_MANAGE'), async (_req, res) => {
   try {
     const users = await listUsers()
     return res.json({ users })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.get('/demerits', requirePermission('USER_MANAGE'), async (_req, res) => {
+  try {
+    const demerits = await listDemerits()
+    return res.json({ demerits })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.get('/staff-tasks', requirePermission('USER_MANAGE'), async (_req, res) => {
+  try {
+    const tasks = await listAdminStaffTasks()
+    return res.json({ tasks })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.get('/staff-tasks/:taskId', requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const task = await getStaffTaskHistory(req.params.taskId)
+    if (!task) return res.status(404).json({ error: 'Staff task not found.' })
+    return res.json({ task })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.post('/staff-tasks/:taskId/extend', requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const task = await extendStaffTaskDeadline({
+      actor: req.user,
+      taskId: req.params.taskId,
+      additionalDays: req.body?.additionalDays,
+      reason: req.body?.reason,
+    })
+    return res.json({ task })
   } catch (error) {
     return sendAdminError(res, error)
   }

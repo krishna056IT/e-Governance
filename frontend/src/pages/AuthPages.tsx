@@ -187,7 +187,7 @@ export function ApplicantStatusAccessPage() {
             <h2>{applications.length ? 'Applications found' : 'No applications found'}</h2>
             {applications.length ? applications.map((application) => (
               <article className="application-status-result" key={application.id}>
-                <h3>{application.applicationType}</h3>
+                <h3>Application {application.id}</h3>
                 <p><strong>Status:</strong> {application.status.replaceAll('_', ' ')}</p>
                 <p><strong>Application ID:</strong> <span className="application-status-result__id">{application.id}</span></p>
                 {application.submittedAt && <p><strong>Submitted:</strong> {new Date(application.submittedAt).toLocaleString()}</p>}

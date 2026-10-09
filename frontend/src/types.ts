@@ -1,5 +1,6 @@
 export type ApplicationStatus =
   | 'DRAFT'
+  | 'WITHDRAWN'
   | 'SUBMITTED'
   | 'PROCESSING'
   | 'HUMAN_VERIFICATION'
@@ -36,6 +37,7 @@ export interface UserRecord {
   mustChangePassword?: boolean
   officerRejectionReason?: string | null
   createdAt?: string
+  demeritPoints?: number
 }
 
 export interface DepartmentRecord {
@@ -70,7 +72,6 @@ export interface ApplicationDeadline {
 export interface ApplicationDocument {
   id: string
   applicationId?: string
-  applicationType?: string | null
   name: string
   status: string
   addedAt: string
@@ -118,12 +119,17 @@ export interface HumanVerificationDocument {
   extractedText: string
   humanVerificationStatus: HumanVerificationStatus
   submittedAt: string
+  deadlineAt?: string | null
+  deadlineRemainingMs?: number | null
+  taskStatus?: string | null
+  taskAssignedAt?: string | null
   originalDocumentUrl?: string
 }
 
 export interface HumanVerificationApplicationDocument {
   id: string
   documentType: string
+  detectedDocumentType?: string | null
   filename: string
   mimeType: string
   ocrScore: number | null
@@ -131,9 +137,23 @@ export interface HumanVerificationApplicationDocument {
   ocrStatus: OcrStatus
   humanVerificationReason?: string | null
   ocrFailureCode?: string | null
+  extractionStatus?: 'NOT_CONFIGURED' | 'COMPLETED' | 'FAILED'
+  extractionFailureCode?: string | null
+  extractedFields?: Array<{
+    name: string
+    status: 'CLEAR' | 'UNCERTAIN' | 'MISSING'
+    confidence: number | null
+    value: string | null
+    evidence: string | null
+    validationIssue?: string | null
+  }>
   extractedText: string
   originalDocumentUrl: string
   submittedAt: string
+  deadlineAt?: string | null
+  deadlineRemainingMs?: number | null
+  taskStatus?: string | null
+  taskAssignedAt?: string | null
 }
 
 export type VerificationReasonCode =
@@ -141,6 +161,7 @@ export type VerificationReasonCode =
   | 'OCR_BELOW_MINIMUM_SAFE'
   | 'OCR_PROCESSING_FAILED'
   | 'AI_CLASSIFICATION_FAILED'
+  | 'AI_EXTRACTION_FAILED'
   | 'UNKNOWN_DEPARTMENT'
   | 'INVALID_AI_CLASSIFICATION'
   | 'INSUFFICIENT_OCR_TEXT'
@@ -177,7 +198,6 @@ export interface VerificationReason {
 export interface HumanVerificationApplication {
   id: string
   applicationId: string
-  applicationType: string
   title: string
   applicantName: string
   status: ApplicationStatus
@@ -197,6 +217,10 @@ export interface HumanVerificationApplication {
   humanVerificationReason?: string | null
   humanVerificationDecision?: 'PASS' | 'REJECT' | null
   humanVerificationRejectionReason?: string | null
+  deadlineAt?: string | null
+  deadlineRemainingMs?: number | null
+  taskStatus?: string | null
+  taskAssignedAt?: string | null
 }
 
 export interface VerifiedExtractedField {
@@ -229,7 +253,6 @@ export interface NotificationRecord {
 
 export interface ApplicationRecord {
   id: string
-  applicationType: string
   applicantId: string
   title: string
   applicantName: string
@@ -250,6 +273,10 @@ export interface ApplicationRecord {
   assignedOfficerName?: string | null
   deadlineAt: ApplicationDeadline['deadlineAt']
   breachedAt: ApplicationDeadline['breachedAt']
+  deadlineRemainingMs?: number | null
+  staffTaskStatus?: string | null
+  taskAssignedAt?: string | null
+  taskCompletedAt?: string | null
   documents: ApplicationDocument[]
   timeline: TimelineEntry[]
   createdAt: string
@@ -289,7 +316,6 @@ export interface ApplicationRecord {
 }
 
 export interface ApplicationDraft {
-  applicationType: string
   title: string
   applicantName: string
   contactEmail: string

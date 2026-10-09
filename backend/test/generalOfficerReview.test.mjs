@@ -112,7 +112,6 @@ async function createApplication({ status = 'ESCALATED', withDocument = false } 
   const officer = createdUsers.find((user) => user.role === 'OFFICER')
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
     applicationData: {
       title: `General review ${createdApplications.length + 1}`,
       applicantName: applicant.displayName,
@@ -200,7 +199,6 @@ test('General Officer queue returns only MongoDB-backed escalated applications',
 test('General Officer tracking searches own submissions using OCR text without exposing it', async () => {
   const ownSubmission = await Application.create({
     applicantId: generalOfficer._id,
-    applicationType: 'Income Certificate',
     applicationData: {
       title: `Dashboard search ${runId}`,
       applicantName: generalOfficer.displayName,

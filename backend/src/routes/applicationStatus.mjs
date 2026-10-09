@@ -22,13 +22,13 @@ router.post('/lookup', async (req, res) => {
     let applications
     if (applicationIdPattern.test(identifier)) {
       applications = await Application.find({ _id: new mongoose.Types.ObjectId(identifier) })
-        .select('_id applicationType status submittedAt updatedAt')
+        .select('_id status submittedAt updatedAt')
         .lean()
     } else if (emailPattern.test(identifier)) {
       applications = await Application.find({
         'applicationData.contactEmail': identifier.toLowerCase(),
       })
-        .select('_id applicationType status submittedAt updatedAt')
+        .select('_id status submittedAt updatedAt')
         .sort({ updatedAt: -1, _id: -1 })
         .limit(20)
         .lean()
@@ -39,7 +39,6 @@ router.post('/lookup', async (req, res) => {
     return res.json({
       applications: applications.map((application) => ({
         id: String(application._id),
-        applicationType: application.applicationType,
         status: application.status,
         submittedAt: application.submittedAt,
         updatedAt: application.updatedAt,

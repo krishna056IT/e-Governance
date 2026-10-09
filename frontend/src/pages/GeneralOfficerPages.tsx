@@ -21,7 +21,6 @@ export function GeneralOfficerSubmissionPage() {
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const [receipt, setReceipt] = useState<{
-    applicationType: string
     applicationId: string
     applicantName: string
   } | null>(null)
@@ -73,7 +72,6 @@ export function GeneralOfficerSubmissionPage() {
           <h2 id="submission-receipt-title">Application received</h2>
           <p className="muted">Keep this receipt. Use the Application ID to track processing progress.</p>
           <dl className="submission-receipt__details">
-            <div><dt>Application Type</dt><dd>{receipt.applicationType}</dd></div>
             {receipt.applicationId && <div><dt>Application ID</dt><dd>{receipt.applicationId}</dd></div>}
             <div><dt>Applicant Name</dt><dd>{receipt.applicantName}</dd></div>
           </dl>

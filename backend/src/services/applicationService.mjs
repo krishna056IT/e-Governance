@@ -1,7 +1,6 @@
 import mongoose from 'mongoose'
 import { env } from '../config/env.mjs'
 import Application, {
-  ACTIVE_APPLICATION_STATUSES,
   APPLICATION_STATUSES,
 } from '../models/Application.mjs'
 import Document from '../models/Document.mjs'
@@ -40,16 +39,12 @@ function validationError(message) {
   return error
 }
 
-function normalizeApplicationType(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
-}
-
 function validateApplicationData(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw validationError('Application information is required.')
   }
 
-  const requiredFields = ['applicationType', 'title', 'applicantName', 'contactEmail', 'details']
+  const requiredFields = ['title', 'applicantName', 'contactEmail', 'details']
   for (const field of requiredFields) {
     if (typeof data[field] !== 'string' || !data[field].trim()) {
       throw validationError(`${field} is required.`)
@@ -58,8 +53,7 @@ function validateApplicationData(data) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.contactEmail.trim())) {
     throw validationError('Enter a valid contact email address.')
   }
-  if (data.applicationType.trim().length > 120 ||
-      data.title.trim().length > 160 ||
+  if (data.title.trim().length > 160 ||
       data.applicantName.trim().length > 160 ||
       data.contactEmail.trim().length > 254 ||
       data.details.trim().length > 10000) {
@@ -82,7 +76,6 @@ export function serializeApplication(application, documents = []) {
     id,
     applicationId: id,
     applicantId: String(record.applicantId),
-    applicationType: record.applicationType,
     title: record.applicationData.title,
     applicantName: record.applicationData.applicantName,
     contactEmail: record.applicationData.contactEmail,
@@ -114,6 +107,9 @@ export function serializeApplication(application, documents = []) {
       ...(record.submittedAt
         ? [{ id: `${id}-submitted`, label: 'Submitted', at: record.submittedAt.toISOString() }]
         : []),
+      ...(record.withdrawnAt
+        ? [{ id: `${id}-withdrawn`, label: 'Withdrawn by applicant', at: record.withdrawnAt.toISOString() }]
+        : []),
     ],
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -132,7 +128,6 @@ export async function createApplicantApplication(actor, data) {
 
   const application = await Application.create({
     applicantId,
-    applicationType: data.applicationType.trim(),
     applicationData: {
       title: data.title.trim(),
       applicantName: data.applicantName.trim(),
@@ -182,6 +177,42 @@ export async function getApplicantApplication(applicantId, applicationId) {
   if (!application) return null
   const documents = await Document.find({ applicationId: application._id }).sort({ createdAt: 1 }).lean()
   return serializeApplication(application, documents.map((document) => serializeDocument(document, application)))
+}
+
+export async function withdrawApplicantApplication(actor, applicationId) {
+  if (!mongoose.isValidObjectId(applicationId)) return null
+  if (actor?.role !== 'APPLICANT' || !mongoose.isValidObjectId(actor.id)) {
+    const error = new Error('An authenticated applicant is required to withdraw an application.')
+    error.statusCode = 403
+    throw error
+  }
+
+  const application = await Application.findOneAndUpdate({
+    _id: applicationId,
+    applicantId: actor.id,
+    status: { $nin: ['APPROVED', 'REJECTED', 'WITHDRAWN'] },
+  }, {
+    $set: { status: 'WITHDRAWN', withdrawnAt: new Date() },
+  }, {
+    new: false,
+    runValidators: true,
+  })
+  if (!application) {
+    const existing = await Application.exists({ _id: applicationId, applicantId: actor.id })
+    if (!existing) return null
+    const error = new Error('This application can no longer be withdrawn.')
+    error.statusCode = 409
+    throw error
+  }
+
+  await recordApplicationStatusTransition({
+    applicationId: application._id,
+    previousStatus: application.status,
+    newStatus: 'WITHDRAWN',
+    actor,
+    action: 'APPLICATION_WITHDRAWN',
+  })
+  return getApplicantApplication(actor.id, applicationId)
 }
 
 function normalizeDepartmentLabel(value) {
@@ -245,28 +276,7 @@ export async function submitApplicantApplication(actor, applicationId, {
     throw error
   }
 
-  if (actor.role === 'APPLICANT' || actor.role === 'GENERAL_OFFICER') {
-    const normalizedApplicationType = normalizeApplicationType(application.applicationType)
-    const activeApplications = await Application.find({
-      applicantId,
-      _id: { $ne: application._id },
-      status: { $in: ACTIVE_APPLICATION_STATUSES },
-    }).select('applicationType').lean()
-    if (activeApplications.some(({ applicationType }) =>
-      normalizeApplicationType(applicationType) === normalizedApplicationType)) {
-      const displayType = application.applicationType.trim().replace(/\s+/g, ' ')
-      const error = new Error(
-        `You already have an active ${displayType} application. You can submit another one after the current application is rejected or completed.`,
-      )
-      error.statusCode = 409
-      throw error
-    }
-  }
-
-  validateApplicationData({
-    applicationType: application.applicationType,
-    ...application.applicationData,
-  })
+  validateApplicationData(application.applicationData)
   if (actor.role === 'APPLICANT') {
     const applicationDocuments = await Document.find({ applicationId: application._id })
       .select('+contentHash')
@@ -277,9 +287,8 @@ export async function submitApplicantApplication(actor, applicationId, {
       contentHashes: applicationDocuments.map(({ contentHash }) => contentHash),
     })
     if (duplicate) {
-      const displayType = duplicate.applicationType.trim().replace(/\s+/g, ' ')
       const error = new Error(
-        `This file is already included in your active ${displayType} application. You can submit it again after that application is rejected or completed.`,
+        'This file is already included in another active application. You can submit it again after that application is rejected, completed, or withdrawn.',
       )
       error.statusCode = 409
       throw error
@@ -297,7 +306,7 @@ export async function submitApplicantApplication(actor, applicationId, {
   })
   await recordApplicationProcessingTransition(application._id, actor)
   const documentsForOcr = await Document.find({ applicationId: application._id })
-    .select('+extractedTextStorageId +contentHash ocrStatus ocrConfidence ocrThreshold ocrFailureCode originalFilename')
+    .select('+extractedTextStorageId +extractedFields +extractedDocumentType +contentHash ocrStatus ocrConfidence ocrThreshold ocrFailureCode extractionStatus extractionFailureCode originalFilename')
     .lean()
   const verificationReasons = []
   const automationConfig = getLowConfidenceAutomationConfig(env)
@@ -309,6 +318,14 @@ export async function submitApplicantApplication(actor, applicationId, {
     confidenceQualifiedFieldCount: 0,
   }
   for (const document of documentsForOcr) {
+    if (document.extractionStatus === 'FAILED') {
+      verificationReasons.push(createVerificationReason({
+        code: 'AI_EXTRACTION_FAILED',
+        document,
+        failureDescription: `Structured extraction failed (${document.extractionFailureCode || 'unknown error'}).`,
+      }))
+      continue
+    }
     if (document.ocrStatus === 'FAILED') {
       verificationReasons.push(getOcrVerificationReason(document, env.MAX_PDF_PAGES))
       continue
@@ -333,6 +350,31 @@ export async function submitApplicantApplication(actor, applicationId, {
         ocrFailureCode: document.ocrFailureCode || 'OCR_PROCESSING_FAILED',
       }, env.MAX_PDF_PAGES))
       continue
+    }
+    if (document.extractionStatus === 'COMPLETED') {
+      const verifiedFields = calculateVerifiedFieldCompleteness({
+        documentType: document.extractedDocumentType,
+        fields: document.extractedFields,
+        ocrText: extractedText,
+        minimumFieldConfidence: automationConfig.criticalFieldConfidence,
+      })
+      const uncertainFields = (document.extractedFields || [])
+        .filter((field) => field.status !== 'CLEAR')
+        .map(({ name }) => name)
+      const reviewFields = [...new Set([
+        ...verifiedFields.fieldNames,
+        ...uncertainFields,
+        ...(!document.extractedDocumentType ? ['documentType'] : []),
+      ])]
+      if (reviewFields.length) {
+        verificationReasons.push(createVerificationReason({
+          code: 'INSUFFICIENT_FIELDS',
+          document,
+          fieldNames: reviewFields,
+          fieldCompleteness: verifiedFields.supported ? verifiedFields.fieldCompleteness : null,
+        }))
+        continue
+      }
     }
     const needsQualityAssessment = document.ocrConfidence < automationConfig.ocrThreshold
     if (!needsQualityAssessment) {
@@ -655,7 +697,6 @@ function serializeDocument(document, application = null) {
   return {
     id,
     applicationId: String(document.applicationId || application?._id || application?.id || ''),
-    applicationType: application?.applicationType || null,
     name: document.originalFilename,
     status: document.ocrStatus,
     addedAt: document.createdAt,

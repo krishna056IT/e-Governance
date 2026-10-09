@@ -1,11 +1,18 @@
 import mongoose from 'mongoose'
 import Application from '../models/Application.mjs'
 import Document from '../models/Document.mjs'
+import StaffTask from '../models/StaffTask.mjs'
 import { createAuditEvent } from './auditService.mjs'
 import { advanceApplicationToOfficerReview } from './applicationLifecycleService.mjs'
 import { readExtractedText } from './documentStorage.mjs'
 import Department from '../models/Department.mjs'
 import { assignApplication } from './applicationAssignmentService.mjs'
+import {
+  assignStaffTask,
+  completeStaffTask,
+  getStaffTask,
+  requireTaskOwnership,
+} from './staffTaskService.mjs'
 
 function requestError(message, statusCode) {
   const error = new Error(message)
@@ -13,7 +20,7 @@ function requestError(message, statusCode) {
   return error
 }
 
-export async function listHumanVerificationApplications(status = 'PENDING') {
+export async function listHumanVerificationApplications(status = 'PENDING', actor = null) {
   const normalizedStatus = String(status).toUpperCase()
   const statusValues = new Set(['ALL', 'PENDING', 'IN_REVIEW', 'PASSED', 'REJECTED'])
   if (!statusValues.has(normalizedStatus)) {
@@ -23,7 +30,12 @@ export async function listHumanVerificationApplications(status = 'PENDING') {
     humanVerificationRequired: true,
     ...(normalizedStatus === 'ALL' ? {} : { humanVerificationStatus: normalizedStatus }),
   }).sort({ submittedAt: 1, _id: 1 }).lean()
-  const applicationIds = applications.map(({ _id }) => _id)
+  const visibleApplications = applications.filter((application) =>
+    application.humanVerificationStatus !== 'IN_REVIEW' ||
+    !application.humanVerifierId ||
+    String(application.humanVerifierId) === String(actor?.id),
+  )
+  const applicationIds = visibleApplications.map(({ _id }) => _id)
   const documents = await Document.find({ applicationId: { $in: applicationIds } })
     .sort({ createdAt: 1, _id: 1 })
     .lean()
@@ -34,15 +46,17 @@ export async function listHumanVerificationApplications(status = 'PENDING') {
     grouped.push(document)
     documentsByApplication.set(key, grouped)
   }
-  return applications.map((application) => {
+  return Promise.all(visibleApplications.map(async (application) => {
     const applicationDocuments = documentsByApplication.get(String(application._id)) || []
+    const task = application.humanVerifierId
+      ? await getStaffTask('HUMAN_VERIFICATION_APPLICATION', application._id, application.humanVerifierId)
+      : null
     const finiteScores = applicationDocuments
       .map(({ ocrConfidence }) => ocrConfidence)
       .filter(Number.isFinite)
     return {
       id: String(application._id),
       applicationId: String(application._id),
-      applicationType: application.applicationType,
       title: application.applicationData.title,
       applicantName: application.applicationData.applicantName,
       reason: application.humanVerificationReason,
@@ -50,6 +64,12 @@ export async function listHumanVerificationApplications(status = 'PENDING') {
       status: application.status,
       humanVerificationStatus: application.humanVerificationStatus,
       submittedAt: application.submittedAt,
+      deadlineAt: task?.dueAt || null,
+      deadlineRemainingMs: task?.status === 'ASSIGNED'
+        ? Math.max(0, task.dueAt.getTime() - Date.now())
+        : null,
+      taskStatus: task?.status || null,
+      taskAssignedAt: task?.assignedAt || null,
       documentCount: applicationDocuments.length,
       ocrScore: finiteScores.length
         ? Math.min(...finiteScores)
@@ -64,21 +84,27 @@ export async function listHumanVerificationApplications(status = 'PENDING') {
         submittedAt: document.createdAt,
       })),
     }
-  })
+  }))
 }
 
-export async function getHumanVerificationApplication(applicationId) {
+export async function getHumanVerificationApplication(applicationId, actor = null) {
   if (!mongoose.isValidObjectId(applicationId)) return null
   const application = await Application.findOne({ _id: applicationId, humanVerificationRequired: true }).lean()
   if (!application) return null
+  if (application.humanVerificationStatus === 'IN_REVIEW' && application.humanVerifierId &&
+      String(application.humanVerifierId) !== String(actor?.id)) {
+    throw requestError('This application is assigned to another Human Verifier.', 403)
+  }
+  const task = application.humanVerifierId
+    ? await getStaffTask('HUMAN_VERIFICATION_APPLICATION', application._id, application.humanVerifierId)
+    : null
   const documents = await Document.find({ applicationId: application._id })
-    .select('+extractedTextStorageId +humanVerificationReason')
+    .select('+extractedTextStorageId +humanVerificationReason +extractedFields +extractedDocumentType +extractionFailureCode')
     .sort({ createdAt: 1, _id: 1 })
     .lean()
   return {
     id: String(application._id),
     applicationId: String(application._id),
-    applicationType: application.applicationType,
     title: application.applicationData.title,
     applicantName: application.applicationData.applicantName,
     reason: application.humanVerificationReason,
@@ -90,15 +116,25 @@ export async function getHumanVerificationApplication(applicationId) {
     humanVerificationDecision: application.humanVerificationDecision,
     humanVerificationRejectionReason: application.humanVerificationRejectionReason,
     submittedAt: application.submittedAt,
+    deadlineAt: task?.dueAt || null,
+    deadlineRemainingMs: task?.status === 'ASSIGNED'
+      ? Math.max(0, task.dueAt.getTime() - Date.now())
+      : null,
+    taskStatus: task?.status || null,
+    taskAssignedAt: task?.assignedAt || null,
     documents: await Promise.all(documents.map(async (document) => ({
       id: String(document._id),
       documentType: document.documentType || document.mimeType,
+      detectedDocumentType: document.extractedDocumentType || document.classification?.documentType || null,
       filename: document.originalFilename,
       mimeType: document.mimeType,
       ocrScore: document.ocrConfidence,
       ocrThreshold: document.ocrThreshold,
       ocrStatus: document.ocrStatus,
       humanVerificationReason: document.humanVerificationReason,
+      extractionStatus: document.extractionStatus,
+      extractionFailureCode: document.extractionFailureCode,
+      extractedFields: document.extractedFields || [],
       extractedText: document.extractedTextStorageId
         ? await readExtractedText(document.extractedTextStorageId)
         : '',
@@ -138,6 +174,7 @@ export async function startHumanVerificationApplicationReview({ applicationId, a
     {
       $set: {
         humanVerificationStatus: 'IN_REVIEW',
+        humanVerifierId: actor.id,
         humanReviewStartedBy: actor.id,
         humanReviewStartedAt: now,
       },
@@ -151,6 +188,13 @@ export async function startHumanVerificationApplicationReview({ applicationId, a
     }
     return null
   }
+  await assignStaffTask({
+    taskType: 'HUMAN_VERIFICATION_APPLICATION',
+    applicationId: application._id,
+    staffId: actor.id,
+    staffRole: actor.role,
+    assignedAt: now,
+  })
   await createAuditEvent({
     applicationId: application._id,
     actor,
@@ -163,6 +207,7 @@ export async function startHumanVerificationApplicationReview({ applicationId, a
     id: String(application._id),
     humanVerificationStatus: application.humanVerificationStatus,
     humanReviewStartedAt: application.humanReviewStartedAt,
+    deadlineAt: (await getStaffTask('HUMAN_VERIFICATION_APPLICATION', application._id, actor.id))?.dueAt || null,
   }
 }
 
@@ -196,6 +241,14 @@ export async function decideHumanVerificationApplication({
     humanVerificationStatus: 'IN_REVIEW',
   }).lean()
   if (!current) throw requestError('This application is no longer under Human Verification review.', 409)
+  if (current.humanVerifierId && String(current.humanVerifierId) !== String(actor.id)) {
+    throw requestError('This application is assigned to another Human Verifier.', 403)
+  }
+  await requireTaskOwnership({
+    taskType: 'HUMAN_VERIFICATION_APPLICATION',
+    applicationId,
+    staffId: actor.id,
+  })
 
   if (decision === 'PASS') {
     if (!mongoose.isValidObjectId(departmentId)) {
@@ -219,6 +272,12 @@ export async function decideHumanVerificationApplication({
         },
       },
     )
+    await completeStaffTask({
+      taskType: 'HUMAN_VERIFICATION_APPLICATION',
+      applicationId,
+      staffId: actor.id,
+      completedAt: assignment.application.humanVerifiedAt || new Date(),
+    })
     await createAuditEvent({
       applicationId,
       actor,
@@ -272,6 +331,12 @@ export async function decideHumanVerificationApplication({
       },
     },
   )
+  await completeStaffTask({
+    taskType: 'HUMAN_VERIFICATION_APPLICATION',
+    applicationId,
+    staffId: actor.id,
+    completedAt: now,
+  })
   await createAuditEvent({
     applicationId,
     actor,
@@ -295,7 +360,7 @@ function isPendingVerification(document) {
     ['PENDING', 'IN_REVIEW'].includes(document.humanVerificationStatus)
 }
 
-function serializeQueueItem(document, application) {
+function serializeQueueItem(document, application, task = null) {
   return {
     id: String(document._id),
     applicationId: String(document.applicationId),
@@ -310,10 +375,16 @@ function serializeQueueItem(document, application) {
     ocrStatus: document.ocrStatus,
     humanVerificationStatus: document.humanVerificationStatus,
     submittedAt: document.createdAt,
+    deadlineAt: task?.dueAt || null,
+    deadlineRemainingMs: task?.status === 'ASSIGNED'
+      ? Math.max(0, task.dueAt.getTime() - Date.now())
+      : null,
+    taskStatus: task?.status || null,
+    taskAssignedAt: task?.assignedAt || null,
   }
 }
 
-export async function listPendingHumanVerifications(status = 'ALL') {
+export async function listPendingHumanVerifications(status = 'ALL', actor = null) {
   const normalizedStatus = String(status).toUpperCase()
   const statuses = new Set(['ALL', 'PENDING', 'IN_REVIEW', 'VERIFIED', 'REJECTED', 'CORRECTION_REQUIRED'])
   if (!statuses.has(normalizedStatus)) {
@@ -325,32 +396,58 @@ export async function listPendingHumanVerifications(status = 'ALL') {
     ...(normalizedStatus === 'ALL' ? {} : { humanVerificationStatus: normalizedStatus }),
   }).sort({ createdAt: 1, _id: 1 }).lean()
 
+  const visibleDocuments = documents.filter((document) =>
+    document.humanVerificationStatus !== 'IN_REVIEW' ||
+    !document.humanReviewStartedBy ||
+    String(document.humanReviewStartedBy) === String(actor?.id),
+  )
   const applications = await Application.find({
-    _id: { $in: documents.map((document) => document.applicationId) },
+    _id: { $in: visibleDocuments.map((document) => document.applicationId) },
   }).select('_id applicationData.title applicationData.applicantName').lean()
   const applicationById = new Map(applications.map((application) => [String(application._id), application]))
+  const tasks = await StaffTask.find({
+    taskType: 'HUMAN_VERIFICATION_DOCUMENT',
+    documentId: { $in: visibleDocuments.map((document) => document._id) },
+    ...(actor?.id ? { staffId: actor.id } : {}),
+  }).sort({ assignedAt: -1 }).lean()
+  const taskByDocumentId = new Map()
+  for (const task of tasks) {
+    const key = String(task.documentId)
+    if (!taskByDocumentId.has(key)) taskByDocumentId.set(key, task)
+  }
 
-  return documents.map((document) =>
-    serializeQueueItem(document, applicationById.get(String(document.applicationId))),
+  return visibleDocuments.map((document) =>
+    serializeQueueItem(
+      document,
+      applicationById.get(String(document.applicationId)),
+      taskByDocumentId.get(String(document._id)),
+    ),
   )
 }
 
-export async function getPendingHumanVerification(documentId) {
+export async function getPendingHumanVerification(documentId, actor = null) {
   if (!mongoose.isValidObjectId(documentId)) return null
   const document = await Document.findById(documentId)
     .select('+extractedTextStorageId +humanVerificationReason')
     .lean()
   if (!isPendingVerification(document)) return null
+  if (document.humanVerificationStatus === 'IN_REVIEW' && document.humanReviewStartedBy &&
+      String(document.humanReviewStartedBy) !== String(actor?.id)) {
+    throw requestError('This document is assigned to another Human Verifier.', 403)
+  }
 
-  const [application, extractedText] = await Promise.all([
+  const [application, extractedText, task] = await Promise.all([
     Application.findById(document.applicationId).select('_id applicationData.title applicationData.applicantName').lean(),
     document.extractedTextStorageId
       ? readExtractedText(document.extractedTextStorageId)
       : Promise.resolve(''),
+    document.humanReviewStartedBy
+      ? getStaffTask('HUMAN_VERIFICATION_DOCUMENT', document.applicationId, document.humanReviewStartedBy, document._id)
+      : null,
   ])
 
   return {
-    ...serializeQueueItem(document, application),
+    ...serializeQueueItem(document, application, task),
     extractedText,
     originalDocumentUrl: `/api/documents/${document._id}`,
   }
@@ -361,6 +458,7 @@ export async function startHumanVerificationReview({ documentId, actor }) {
   if (!actor?.id || !mongoose.isValidObjectId(actor.id)) {
     throw requestError('An authenticated Human Verifier is required.', 401)
   }
+  const assignedAt = new Date()
   const document = await Document.findOneAndUpdate(
     {
       _id: documentId,
@@ -372,7 +470,7 @@ export async function startHumanVerificationReview({ documentId, actor }) {
       $set: {
         humanVerificationStatus: 'IN_REVIEW',
         humanReviewStartedBy: actor.id,
-        humanReviewStartedAt: new Date(),
+        humanReviewStartedAt: assignedAt,
       },
     },
     { new: true, runValidators: true },
@@ -384,6 +482,14 @@ export async function startHumanVerificationReview({ documentId, actor }) {
     }
     return null
   }
+  const task = await assignStaffTask({
+    taskType: 'HUMAN_VERIFICATION_DOCUMENT',
+    applicationId: document.applicationId,
+    documentId: document._id,
+    staffId: actor.id,
+    staffRole: actor.role,
+    assignedAt,
+  })
   await createAuditEvent({
     applicationId: document.applicationId,
     documentId: document._id,
@@ -396,6 +502,7 @@ export async function startHumanVerificationReview({ documentId, actor }) {
     id: String(document._id),
     humanVerificationStatus: document.humanVerificationStatus,
     humanReviewStartedAt: document.humanReviewStartedAt,
+    deadlineAt: task.dueAt,
   }
 }
 
@@ -452,6 +559,17 @@ export async function decideHumanVerification({
   if (!isPendingVerification(document)) {
     return null
   }
+  if (document.humanVerificationStatus === 'IN_REVIEW' &&
+      document.humanReviewStartedBy &&
+      String(document.humanReviewStartedBy) !== String(verifierId)) {
+    throw requestError('This document is assigned to another reviewer.', 403)
+  }
+  await requireTaskOwnership({
+    taskType: 'HUMAN_VERIFICATION_DOCUMENT',
+    applicationId: document.applicationId,
+    documentId: document._id,
+    staffId: verifierId,
+  })
   if (
     !Number.isFinite(document.ocrConfidence) ||
     !Number.isFinite(document.ocrThreshold) ||
@@ -487,6 +605,13 @@ export async function decideHumanVerification({
   if (!updated) {
     throw requestError('This document is no longer pending human verification.', 409)
   }
+  await completeStaffTask({
+    taskType: 'HUMAN_VERIFICATION_DOCUMENT',
+    applicationId: updated.applicationId,
+    documentId: updated._id,
+    staffId: verifierId,
+    completedAt: verifiedAt,
+  })
   await createAuditEvent({
     applicationId: updated.applicationId,
     documentId: updated._id,

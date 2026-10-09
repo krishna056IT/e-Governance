@@ -96,7 +96,6 @@ before(async () => {
 
   const alreadyAssigned = await Application.create({
     applicantId: applicant._id,
-    applicationType: `Residence certificate workload ${runId}`,
     applicationData: {
       title: 'Already assigned workload',
       applicantName: 'Applicant',
@@ -148,7 +147,6 @@ async function createHumanVerificationApplication(title) {
   const applicant = users[1]
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: `Residence certificate ${title}`,
     applicationData: {
       title,
       applicantName: applicant.displayName,
@@ -184,7 +182,6 @@ test('failed OCR submissions enter application Human Verification and flag their
   const draftResponse = await request('/api/applications', applicantToken, {
     method: 'POST',
     body: JSON.stringify({
-      applicationType: `Failed OCR certificate ${runId}`,
       title: 'Failed OCR application',
       applicantName: applicant.displayName,
       contactEmail: applicant.email,
@@ -354,4 +351,31 @@ test('Human Verifier reviews whole applications and either routes or rejects the
   assert.equal(rejectedApplication.humanVerificationRejectionReason, rejectionReason)
   assert.equal(rejectedApplication.assignedOfficerId, null)
   assert.equal(rejectedApplication.departmentId, null)
+})
+
+test('Human Verifier detail exposes structured field values, evidence, and detected document type', async () => {
+  const { application, document } = await createHumanVerificationApplication('Structured extraction detail')
+  document.extractedDocumentType = 'Income Certificate'
+  document.extractionStatus = 'COMPLETED'
+  document.extractedFields = [{
+    name: 'annualIncome',
+    status: 'UNCERTAIN',
+    confidence: 0.62,
+    value: '45000',
+    evidence: 'Annual income: 45000',
+    validationIssue: 'Field confidence is below the required threshold.',
+  }]
+  await document.save()
+
+  const response = await request(
+    `/api/human-verification/applications/${application._id}`,
+    verifierToken,
+  )
+  assert.equal(response.status, 200)
+  const detail = (await response.json()).application
+  assert.equal(detail.documents[0].detectedDocumentType, 'Income Certificate')
+  assert.equal(detail.documents[0].extractedFields[0].name, 'annualIncome')
+  assert.equal(detail.documents[0].extractedFields[0].value, '45000')
+  assert.equal(detail.documents[0].extractedFields[0].status, 'UNCERTAIN')
+  assert.match(detail.documents[0].extractedFields[0].validationIssue, /confidence/)
 })

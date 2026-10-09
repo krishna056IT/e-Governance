@@ -1,4 +1,4 @@
-import Application from '../models/Application.mjs'
+import Application, { APPLICATION_STATUSES, TERMINAL_APPLICATION_STATUSES } from '../models/Application.mjs'
 import Document from '../models/Document.mjs'
 import { createAuditEvent } from './auditService.mjs'
 
@@ -15,6 +15,12 @@ const allowedTransitions = new Map([
   ['UNDER_REVIEW', new Set(['APPROVED', 'REJECTED', 'ESCALATED'])],
   ['ESCALATED', new Set(['APPROVED', 'REJECTED'])],
 ])
+for (const status of APPLICATION_STATUSES) {
+  if (!allowedTransitions.has(status)) allowedTransitions.set(status, new Set())
+  if (!TERMINAL_APPLICATION_STATUSES.includes(status)) {
+    allowedTransitions.get(status).add('WITHDRAWN')
+  }
+}
 
 export async function recordApplicationStatusTransition({
   applicationId,

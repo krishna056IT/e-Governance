@@ -1,5 +1,6 @@
 import type { DepartmentRecord, OfficerRegistrationRecord, UserRecord } from '../types'
 import type { AdminOverview } from '../types/admin'
+import type { AdminDemerit, AdminStaffTask, AdminStaffTaskHistory } from '../types/admin'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -64,6 +65,29 @@ export const adminService = {
   async listUsers() {
     const data = await request<{ users: UserRecord[] }>('/admin/users')
     return data.users
+  },
+
+  async listDemerits() {
+    const data = await request<{ demerits: AdminDemerit[] }>('/admin/demerits')
+    return data.demerits
+  },
+
+  async listStaffTasks() {
+    const data = await request<{ tasks: AdminStaffTask[] }>('/admin/staff-tasks')
+    return data.tasks
+  },
+
+  async getStaffTaskHistory(taskId: string) {
+    const data = await request<{ task: AdminStaffTaskHistory }>(`/admin/staff-tasks/${encodeURIComponent(taskId)}`)
+    return data.task
+  },
+
+  async extendStaffTask(taskId: string, additionalDays: number, reason: string) {
+    const data = await request<{ task: AdminStaffTaskHistory }>(`/admin/staff-tasks/${encodeURIComponent(taskId)}/extend`, {
+      method: 'POST',
+      body: JSON.stringify({ additionalDays, reason }),
+    })
+    return data.task
   },
 
   async listOfficerRegistrations() {

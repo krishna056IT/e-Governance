@@ -3,6 +3,7 @@ import { AdminStatCard } from '../components/admin/AdminPrimitives'
 import type { AdminSection } from '../components/AdminLayout'
 import type { DepartmentRecord, UserRecord } from '../types'
 import type { AdminOverview } from '../types/admin'
+import type { AdminDemerit, AdminStaffTask, AdminStaffTaskHistory } from '../types/admin'
 import { formatAdminCount, roleLabel } from '../types/admin'
 
 export function AdminDashboardHome({
@@ -12,7 +13,12 @@ export function AdminDashboardHome({
   activeDepartmentCount,
   actionMessage,
   actionMessageIsError,
+  overdueDemerits,
+  staffTasks,
+  taskHistory,
   onChangeSection,
+  onInspectTask,
+  onExtendTask,
 }: {
   overview: AdminOverview
   departments: DepartmentRecord[]
@@ -20,7 +26,12 @@ export function AdminDashboardHome({
   activeDepartmentCount: number
   actionMessage: string
   actionMessageIsError: boolean
+  overdueDemerits: AdminDemerit[]
+  staffTasks: AdminStaffTask[]
+  taskHistory: AdminStaffTaskHistory | null
   onChangeSection: (section: AdminSection) => void
+  onInspectTask: (taskId: string) => void
+  onExtendTask: (task: AdminStaffTask) => void
 }) {
   const activeStaff = staffUsers.filter((user) => user.isActive !== false).length
   const departmentSummaries = departments
@@ -48,6 +59,75 @@ export function AdminDashboardHome({
       </section>
 
       {actionMessage && <p className={`admin-inline-message${actionMessageIsError ? ' admin-inline-message--error' : ''}`} role={actionMessageIsError ? 'alert' : 'status'}>{actionMessage}</p>}
+
+      <section className="admin-panel">
+        <div className="admin-panel__heading">
+          <div><p className="admin-eyebrow">STAFF ACCOUNTABILITY</p><h2>Overdue tasks and demerits</h2><p>One point is recorded for each assignment that passes its due date unfinished.</p></div>
+        </div>
+        {!overdueDemerits.length ? <p className="admin-muted">No staff demerits have been recorded.</p> : (
+          <div className="admin-table-scroll" role="region" aria-label="Overdue staff task demerits" tabIndex={0}>
+            <table className="admin-table">
+              <thead><tr><th>Staff member</th><th>Role</th><th>Overdue task</th><th>Due date</th><th>Overdue duration</th><th>Points</th><th>History</th></tr></thead>
+              <tbody>{overdueDemerits.map((item) => (
+                <tr key={item.id}>
+                  <td><span className="admin-table__primary">{item.staffName}</span><span className="admin-table__secondary">{item.staffEmail}</span></td>
+                  <td>{roleLabel(item.role as UserRecord['role'])}</td>
+                  <td>{item.documentName || item.applicationTitle}</td>
+                  <td>{new Date(item.dueAt).toLocaleString()}</td>
+                  <td>{formatDuration(item.overdueDurationMs)}</td>
+                  <td>{item.points}</td>
+                  <td><button className="button button--secondary button--small" type="button" onClick={() => onInspectTask(item.taskId)}>Inspect task</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="admin-panel">
+        <div className="admin-panel__heading">
+          <div><p className="admin-eyebrow">DEADLINE MANAGEMENT</p><h2>Active staff assignments</h2><p>Admin extensions require a positive number of calendar days and an audited reason.</p></div>
+        </div>
+        {!staffTasks.length ? <p className="admin-muted">There are no assigned Officer or Human Verifier tasks.</p> : (
+          <div className="admin-table-scroll" role="region" aria-label="Active staff assignments" tabIndex={0}>
+            <table className="admin-table">
+              <thead><tr><th>Staff member</th><th>Role</th><th>Task</th><th>Due date</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>{staffTasks.map((task) => (
+                <tr key={task.id}>
+                  <td>{task.staffName}</td>
+                  <td>{roleLabel(task.role as UserRecord['role'])}</td>
+                  <td>{task.documentName || task.applicationTitle}</td>
+                  <td>{new Date(task.dueAt).toLocaleString()}</td>
+                  <td>{task.status === 'OVERDUE' ? `OVERDUE · ${formatDuration(task.overdueDurationMs)}` : formatDuration(task.remainingMs)}</td>
+                  <td className="admin-table__actions">
+                    <button className="button button--secondary button--small" type="button" onClick={() => onInspectTask(task.id)}>Inspect</button>
+                    {task.status === 'ASSIGNED' && <button className="admin-text-action" type="button" onClick={() => onExtendTask(task)}>Extend deadline</button>}
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {taskHistory && <section className="admin-panel">
+        <div className="admin-panel__heading">
+          <div><p className="admin-eyebrow">TASK AUDIT HISTORY</p><h2>{taskHistory.application?.title || 'Staff task'}</h2></div>
+          <button className="button button--quiet button--small" type="button" onClick={() => onInspectTask('')}>Close</button>
+        </div>
+        <dl className="admin-health-list">
+          <div><dt>Staff member</dt><dd>{taskHistory.staff?.displayName || 'Former staff member'}</dd></div>
+          <div><dt>Role</dt><dd>{taskHistory.staff?.role || '—'}</dd></div>
+          <div><dt>Task</dt><dd>{taskHistory.document?.filename || taskHistory.application?.title || taskHistory.taskType}</dd></div>
+          <div><dt>Assigned</dt><dd>{new Date(taskHistory.assignedAt).toLocaleString()}</dd></div>
+          <div><dt>Due</dt><dd>{new Date(taskHistory.dueAt).toLocaleString()}</dd></div>
+          <div><dt>Completed</dt><dd>{taskHistory.completedAt ? new Date(taskHistory.completedAt).toLocaleString() : 'Not completed'}</dd></div>
+          <div><dt>Status</dt><dd>{taskHistory.status}</dd></div>
+          <div><dt>Demerit</dt><dd>{taskHistory.demerit ? `${taskHistory.demerit.points} point(s), recorded ${new Date(taskHistory.demerit.recordedAt).toLocaleString()}` : 'None'}</dd></div>
+        </dl>
+        <h3>Authorized deadline extensions</h3>
+        {taskHistory.extensions.length ? <ul>{taskHistory.extensions.map((extension, index) => <li key={`${extension.extendedAt}-${index}`}>{new Date(extension.previousDueAt).toLocaleString()} → {new Date(extension.newDueAt).toLocaleString()} · {extension.reason} · {new Date(extension.extendedAt).toLocaleString()}</li>)}</ul> : <p className="admin-muted">No extension has been recorded.</p>}
+      </section>}
 
       <div className="admin-dashboard-columns">
       <section className="admin-panel admin-chart-panel">
@@ -129,4 +209,10 @@ export function AdminDashboardHome({
       </section>
     </>
   )
+}
+
+function formatDuration(milliseconds: number) {
+  const hours = Math.ceil(Math.max(0, milliseconds) / 3_600_000)
+  if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
+  return `${hours}h`
 }

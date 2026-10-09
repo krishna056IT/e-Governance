@@ -69,7 +69,6 @@ async function filterApplicationsBySearch(applications, search) {
     applications
       .filter((application) => [
         application.id,
-        application.applicationType,
         application.title,
         application.applicantName,
       ].some((value) => String(value || '').toLocaleLowerCase().includes(query)))

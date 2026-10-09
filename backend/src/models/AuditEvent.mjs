@@ -19,13 +19,13 @@ const auditEventSchema = new mongoose.Schema(
     actorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      default: null,
       index: true,
       immutable: true,
     },
     actorRole: {
       type: String,
-      enum: ['APPLICANT', 'OFFICER', 'GENERAL_OFFICER', 'HUMAN_VERIFIER', 'ADMIN'],
+      enum: ['APPLICANT', 'OFFICER', 'GENERAL_OFFICER', 'HUMAN_VERIFIER', 'ADMIN', 'SYSTEM'],
       required: true,
       immutable: true,
     },
@@ -33,6 +33,7 @@ const auditEventSchema = new mongoose.Schema(
     previousStatus: { type: String, default: null, maxlength: 40, immutable: true },
     newStatus: { type: String, default: null, maxlength: 40, immutable: true },
     reason: { type: String, default: null, maxlength: 2000, immutable: true },
+    idempotencyKey: { type: String, immutable: true },
     occurredAt: { type: Date, required: true, default: Date.now, immutable: true },
   },
   {
@@ -40,6 +41,8 @@ const auditEventSchema = new mongoose.Schema(
     versionKey: false,
   },
 )
+
+auditEventSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true })
 
 auditEventSchema.pre('save', function preventAuditEventOverwrite() {
   if (!this.isNew) throw new Error('Audit events are append-only.')

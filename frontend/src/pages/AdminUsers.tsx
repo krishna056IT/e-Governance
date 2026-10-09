@@ -81,7 +81,7 @@ export function AdminUsers({
           />
         ) : (
           <AdminTable label="Account directory">
-            <thead><tr><th>Name & email</th><th>Role</th><th>Department</th><th>Government ID</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name & email</th><th>Role</th><th>Department</th><th>Government ID</th><th>Demerit points</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>{filteredUsers.map((user) => {
               const department = user.departmentId ? departmentById.get(user.departmentId) : null
               return (
@@ -90,6 +90,7 @@ export function AdminUsers({
                   <td><span className="admin-role-tag">{roleLabel(user.role)}</span></td>
                   <td>{department?.name || '—'}</td>
                   <td><span className="admin-code">{user.governmentOfficerId || '—'}</span></td>
+                  <td>{isStaffRole(user.role) ? user.demeritPoints ?? 0 : '—'}</td>
                   <td>{user.accountStatus
                     ? <span className={`admin-registration-status admin-registration-status--${user.accountStatus.toLowerCase()}`}>{user.accountStatus}</span>
                     : <AdminStatus active={user.isActive !== false} />}</td>

@@ -20,7 +20,7 @@ export async function findActiveDuplicateDocument({
     _id: { $in: matchingDocuments.map(({ applicationId: id }) => id) },
     applicantId,
     status: { $in: ACTIVE_APPLICATION_STATUSES },
-  }).select('applicationType applicationData.title').sort({ createdAt: 1, _id: 1 }).lean()
+  }).select('applicationData.title').sort({ createdAt: 1, _id: 1 }).lean()
 
   return activeApplications[0] || null
 }

@@ -64,4 +64,11 @@ export const applicationService = {
     })
     return response.application
   },
+
+  async withdraw(id: string): Promise<ApplicationRecord> {
+    const response = await request<ApplicationResponse>(`/applications/${encodeURIComponent(id)}/withdraw`, {
+      method: 'POST',
+    })
+    return response.application
+  },
 }

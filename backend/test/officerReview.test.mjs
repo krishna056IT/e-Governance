@@ -152,7 +152,6 @@ async function createApplication({
   const applicant = createdUsers.find((user) => user.role === 'APPLICANT')
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
     applicationData: {
       title: `Officer review ${createdApplications.length + 1}`,
       applicantName: applicant.displayName,

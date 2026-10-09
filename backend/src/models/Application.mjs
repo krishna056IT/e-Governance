@@ -3,6 +3,7 @@ import { VERIFICATION_REASON_CODES } from '../services/verificationReasonService
 
 export const APPLICATION_STATUSES = Object.freeze([
   'DRAFT',
+  'WITHDRAWN',
   'SUBMITTED',
   'PROCESSING',
   'HUMAN_VERIFICATION',
@@ -20,7 +21,7 @@ export const APPLICATION_STATUSES = Object.freeze([
   'REJECTED',
 ])
 
-export const TERMINAL_APPLICATION_STATUSES = Object.freeze(['APPROVED', 'REJECTED'])
+export const TERMINAL_APPLICATION_STATUSES = Object.freeze(['APPROVED', 'REJECTED', 'WITHDRAWN'])
 export const ACTIVE_APPLICATION_STATUSES = Object.freeze(APPLICATION_STATUSES.filter((status) =>
   status !== 'DRAFT' && !TERMINAL_APPLICATION_STATUSES.includes(status)))
 
@@ -74,12 +75,6 @@ const applicationSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
       index: true,
-    },
-    applicationType: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 120,
     },
     applicationData: {
       title: { type: String, required: true, trim: true, maxlength: 160 },
@@ -173,6 +168,10 @@ const applicationSchema = new mongoose.Schema(
       maxlength: 2000,
     },
     submittedAt: {
+      type: Date,
+      default: null,
+    },
+    withdrawnAt: {
       type: Date,
       default: null,
     },

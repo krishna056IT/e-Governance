@@ -20,6 +20,33 @@ function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : '—'
 }
 
+function TaskDeadline({
+  deadlineAt,
+  deadlineRemainingMs,
+  taskStatus,
+}: {
+  deadlineAt?: string | null
+  deadlineRemainingMs?: number | null
+  taskStatus?: string | null
+}) {
+  if (!deadlineAt) return <p className="muted">Deadline starts when this review is assigned.</p>
+  const overdue = ['OVERDUE', 'COMPLETED_OVERDUE', 'REASSIGNED_OVERDUE'].includes(taskStatus || '') ||
+    ((taskStatus === 'ASSIGNED' || !taskStatus) &&
+      deadlineRemainingMs !== null && deadlineRemainingMs !== undefined && deadlineRemainingMs <= 0)
+  const completed = taskStatus === 'COMPLETED'
+  const hasRemainingTime = deadlineRemainingMs !== null && deadlineRemainingMs !== undefined
+  const hours = Math.ceil(Math.max(0, deadlineRemainingMs || 0) / 3_600_000)
+  const remaining = hours >= 24
+    ? `${Math.floor(hours / 24)}d ${hours % 24}h remaining`
+    : `${hours}h remaining`
+  return (
+    <p className={overdue ? 'form-alert form-alert--error' : 'muted'}>
+      <strong>{overdue ? 'OVERDUE' : 'Review deadline'}:</strong> {formatDate(deadlineAt)}
+      {' · '}{overdue ? 'Deadline passed' : completed ? 'Completed' : hasRemainingTime ? remaining : taskStatus || 'Unassigned'}
+    </p>
+  )
+}
+
 function VerificationReasons({ reasons }: { reasons: VerificationReason[] }) {
   if (!reasons.length) return null
   return (
@@ -146,8 +173,10 @@ export function HumanVerificationDashboardPage() {
             {filtered.map((application) => (
               <article className="verification-list__item" key={application.id}>
                 <div>
-                  <p className="eyebrow">{application.applicationId} · {application.applicationType}</p>
+                  <p className="eyebrow">{application.applicationId}</p>
                   <h3>{application.applicantName} · {application.title}</h3>
+                  {['IN_REVIEW', 'PASSED', 'REJECTED'].includes(application.humanVerificationStatus) &&
+                    <TaskDeadline deadlineAt={application.deadlineAt} deadlineRemainingMs={application.deadlineRemainingMs} taskStatus={application.taskStatus} />}
                   <p className="muted">
                     {application.documentCount} document(s) · {application.verificationReasons?.map(({ documentName, message }) => `${documentName}: ${message}`).join(' ') || application.reason || 'Reason details were not recorded for this application.'} · Submitted {formatDate(application.submittedAt)}
                   </p>
@@ -206,12 +235,28 @@ function OriginalDocument({ document }: { document: HumanVerificationApplication
   }, [document.id, show])
 
   return (
-    <InfoCard title={`${document.documentType} · ${document.filename}`}>
+    <InfoCard title={`${document.detectedDocumentType || document.documentType} · ${document.filename}`}>
       <dl className="summary-grid">
         <div><dt>Document review</dt><dd>{document.ocrStatus === 'LOW_CONFIDENCE' ? 'Verification pending' : document.ocrStatus}</dd></div>
         <div><dt>Uploaded</dt><dd>{formatDate(document.submittedAt)}</dd></div>
       </dl>
       {document.humanVerificationReason && <p>{document.humanVerificationReason}</p>}
+      {document.extractionFailureCode && <p className="form-alert form-alert--error">Structured extraction failed ({document.extractionFailureCode}); verify the OCR text against the original.</p>}
+      {document.extractedFields && document.extractedFields.length > 0 && (
+        <section aria-label="Structured extracted fields">
+          <h3>Structured extracted fields</h3>
+          <dl className="summary-grid">
+            {document.extractedFields.map((field) => (
+              <div key={field.name}>
+                <dt>{field.name}</dt>
+                <dd>{field.value || 'Not extracted'} · {field.status}{field.confidence !== null ? ` · ${Math.round(field.confidence * 100)}% confidence` : ''}</dd>
+                {field.validationIssue && <dd>{field.validationIssue}</dd>}
+                {field.evidence && <dd>Evidence: {field.evidence}</dd>}
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
       <h3>OCR-extracted information</h3>
       <OcrTextDisplay text={document.extractedText} />
       {document.extractedText && (
@@ -323,19 +368,23 @@ export function HumanVerificationDetailsPage() {
       <PageHeader
         eyebrow="APPLICATION HUMAN VERIFICATION"
         title={application?.title || 'Application review'}
-        description={application ? `${application.applicantName} · ${application.applicationId} · ${application.applicationType}` : 'Review the application and its uploaded evidence.'}
+        description={application ? `${application.applicantName} · ${application.applicationId}` : 'Review the application and its uploaded evidence.'}
         action={<Link className="button button--secondary" to="/human-verifier">← Verification queue</Link>}
       />
       {loading ? <LoadingState /> : error && !application
         ? <ErrorState message={error} />
         : application && (
           <>
+            <TaskDeadline
+              deadlineAt={application.deadlineAt}
+              deadlineRemainingMs={application.deadlineRemainingMs}
+              taskStatus={application.taskStatus}
+            />
             <InfoCard title="Application and applicant">
               <dl className="summary-grid">
                 <div><dt>Application ID</dt><dd>{application.applicationId}</dd></div>
                 <div><dt>Applicant</dt><dd>{application.applicationData?.applicantName || application.applicantName}</dd></div>
                 <div><dt>Contact email</dt><dd>{application.applicationData?.contactEmail || '—'}</dd></div>
-                <div><dt>Application type</dt><dd>{application.applicationType}</dd></div>
                 <div><dt>Current application status</dt><dd>{application.status}</dd></div>
                 <div><dt>Verification status</dt><dd>{application.humanVerificationStatus}</dd></div>
                 <div><dt>Submitted</dt><dd>{formatDate(application.submittedAt)}</dd></div>

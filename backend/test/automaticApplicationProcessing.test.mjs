@@ -131,7 +131,6 @@ before(async () => {
 
   const loadedWork = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Workload fixture',
     applicationData: {
       title: 'Loaded officer workload',
       applicantName: applicant.displayName,
@@ -221,7 +220,6 @@ after(async () => {
 async function makeDraft(title) {
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: `Automatic application ${title}`,
     applicationData: {
       title,
       applicantName: applicant.displayName,
@@ -241,6 +239,10 @@ async function addDocument(application, {
   confidence = 96,
   threshold = 90,
   failureCode = null,
+  extractionStatus = 'NOT_CONFIGURED',
+  extractionFailureCode = null,
+  extractedDocumentType = null,
+  extractedFields = [],
 } = {}) {
   const id = randomUUID()
   if (text !== null) {
@@ -259,6 +261,10 @@ async function addDocument(application, {
     ocrStatus: status,
     ocrConfidence: confidence,
     ocrThreshold: threshold,
+    extractionStatus,
+    extractionFailureCode,
+    extractedDocumentType,
+    extractedFields,
     ...(failureCode ? { ocrFailureCode: failureCode } : {}),
   })
 }
@@ -325,10 +331,10 @@ test('HTTP applicant upload, automatic assignment, Officer rejection, and applic
       })
       const body = await result.json()
       assert.equal(result.status, 201, JSON.stringify(body))
-      assert.equal(body.receipt.applicationType, 'Income Certificate')
       assert.equal(body.receipt.applicantName, 'General Office Test Applicant')
       assert.equal(body.receipt.applicationId, body.application.id)
-      assert.equal(body.receipt.applicationType, body.application.applicationType)
+      assert.equal('applicationType' in body.receipt, false)
+      assert.equal('applicationType' in body.application, false)
       assert.equal(body.receipt.applicantName, body.application.applicantName)
       if (!firstFileBytes) {
         firstFileBytes = fileBytes
@@ -376,9 +382,8 @@ test('HTTP applicant upload, automatic assignment, Officer rejection, and applic
       const stored = await Application.findById(receipt.applicationId).lean()
       const documents = await Document.find({ applicationId: receipt.applicationId }).lean()
       assert.ok(stored)
-      assert.equal(stored.applicationType, receipt.applicationType)
       assert.equal(stored.applicationData.applicantName, receipt.applicantName)
-      assert.equal(stored.applicationType, 'Income Certificate')
+      assert.equal('applicationType' in stored, false)
       assert.equal(String(stored.applicantId), String(generalOfficer._id))
       assert.equal(documents.length, 1)
       uploadedDocumentIds.push(...documents.map(({ _id }) => _id))
@@ -406,7 +411,6 @@ test('HTTP applicant upload, automatic assignment, Officer rejection, and applic
       method: 'POST',
       headers: { ...applicantHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        applicationType: 'Agriculture relief assistance',
         title: 'Synthetic Agriculture Relief Request',
         applicantName: applicant.displayName,
         contactEmail: applicant.email,
@@ -691,7 +695,6 @@ test('least-pending assignment is deterministic and isolated by department', asy
   const workloadApplications = await Application.create(workloadFixture.flatMap(([officer, count, timestamp]) =>
     Array.from({ length: count }, (_, index) => ({
       applicantId: applicant._id,
-      applicationType: 'Assignment workload fixture',
       applicationData: {
         title: `Pending workload ${officer.displayName} ${index}`,
         applicantName: applicant.displayName,
@@ -707,7 +710,6 @@ test('least-pending assignment is deterministic and isolated by department', asy
   applications.push(...workloadApplications.map(({ _id }) => _id))
   const completedAssignment = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Completed assignment history fixture',
     applicationData: {
       title: 'Completed historical assignment',
       applicantName: applicant.displayName,
@@ -789,7 +791,6 @@ test('automatic workload balancing recalculates the lowest workload after every 
   for (const [officer, count] of [[officerA, 5], [officerB, 2], [officerC, 7]]) {
     const workload = await Application.create(Array.from({ length: count }, (_, index) => ({
       applicantId: applicant._id,
-      applicationType: 'Workload balancing fixture',
       applicationData: {
         title: `Balance workload ${officer.displayName} ${index}`,
         applicantName: applicant.displayName,
@@ -1054,6 +1055,67 @@ test('missing document fields at moderate OCR confidence enter Human Verificatio
     department: 'Revenue',
     confidence: 0.94,
   }
+})
+
+test('missing structured extraction fields route to Human Verification', async () => {
+  const application = await makeDraft('Structured fields missing')
+  await addDocument(application, {
+    filename: 'birth-certificate.pdf',
+    text: 'BIRTH CERTIFICATE\nApplicant: Asha Sharma',
+    extractionStatus: 'COMPLETED',
+    extractedDocumentType: 'Birth Certificate',
+    extractedFields: [{
+      name: 'applicantName',
+      status: 'CLEAR',
+      confidence: 0.99,
+      value: 'Asha Sharma',
+      evidence: 'Applicant: Asha Sharma',
+    }],
+  })
+  const submitted = await submit(application)
+  assert.equal(submitted.status, 'HUMAN_VERIFICATION')
+  assert.equal('applicationType' in submitted, false)
+  assert.equal(submitted.verificationReasons[0].code, 'INSUFFICIENT_FIELDS')
+  assert.ok(submitted.verificationReasons[0].fieldNames.includes('dateOfBirth'))
+})
+
+test('successful document classification identifies the uploaded document type', async () => {
+  const existingPendingApplication = await makeDraft(
+    'Existing pending document identification',
+  )
+  existingPendingApplication.status = 'ASSIGNED'
+  await existingPendingApplication.save()
+
+  const application = await makeDraft('Detected birth certificate')
+  responseClassification = {
+    documentType: 'Birth Certificate',
+    department: targetDepartment.code,
+    confidence: 0.98,
+  }
+  await addDocument(application, {
+    filename: 'birth-certificate.pdf',
+    text: 'BIRTH CERTIFICATE\nApplicant: Asha Sharma\nDate of birth: 2001-01-01',
+  })
+
+  const submitted = await submit(application)
+  assert.equal('applicationType' in submitted, false)
+  const stored = await Application.findById(application._id).lean()
+  assert.equal('applicationType' in stored, false)
+})
+
+test('structured extraction failures enter Human Verification despite readable Tesseract fallback text', async () => {
+  const application = await makeDraft('Structured extraction failed')
+  await addDocument(application, {
+    filename: 'income-certificate.pdf',
+    text: 'INCOME CERTIFICATE\nApplicant: Asha Sharma',
+    extractionStatus: 'FAILED',
+    extractionFailureCode: 'RATE_LIMITED',
+  })
+  const submitted = await submit(application)
+  assert.equal(submitted.status, 'HUMAN_VERIFICATION')
+  assert.equal('applicationType' in submitted, false)
+  assert.equal(submitted.verificationReasons[0].code, 'AI_EXTRACTION_FAILED')
+  assert.match(submitted.verificationReasons[0].failureDescription, /RATE_LIMITED/)
 })
 
 for (const confidence of [59.99, 40]) {

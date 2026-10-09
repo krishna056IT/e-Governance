@@ -23,8 +23,6 @@ import { DocumentUploadError, documentService } from '../services/documentServic
 import { askChatbot, type ChatReply } from '../services/chatService'
 import type { ApplicationDraft, ApplicationRecord } from '../types'
 
-const defaultApplicantService = 'Income Certificate'
-
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} bytes`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -132,18 +130,18 @@ export function ApplicantDashboardPage() {
       }
     }
     setUploadFiles(remainingFiles)
-    setDashboardUploadStatus(messages.join(' '))
     try {
       const refreshedApplications = await applicationService.listForApplicant()
       setApplications(refreshedApplications)
     } catch (reason) {
       setDashboardUploadError(reason instanceof Error ? reason.message : 'Document processing completed, but application status could not be refreshed.')
     } finally {
+      setDashboardUploadStatus(messages.join(' '))
       setUploadingDashboardFiles(false)
     }
   }
 
-  const activeCount = applications.filter((application) => application.status !== 'APPROVED' && application.status !== 'REJECTED').length
+  const activeCount = applications.filter((application) => !['APPROVED', 'REJECTED', 'WITHDRAWN'].includes(application.status)).length
   const decisionCount = applications.filter((application) => application.status === 'APPROVED' || application.status === 'REJECTED').length
   const selectedUploadApplication = applications.find((application) => application.id === uploadApplicationId)
   return (
@@ -158,7 +156,7 @@ export function ApplicantDashboardPage() {
             <select id="dashboard-upload-application" value={uploadApplicationId} disabled={uploadingDashboardFiles}
               onChange={(event) => setUploadApplicationId(event.target.value)}>
               {applications.filter((application) => application.status === 'DRAFT').map((application) => (
-                <option key={application.id} value={application.id}>{application.title} · {application.applicationType}</option>
+                <option key={application.id} value={application.id}>Draft application · {application.id.slice(-6)}</option>
               ))}
             </select>
           </div>
@@ -314,7 +312,7 @@ export function ApplicantHelpPage() {
         </InfoCard>
         <InfoCard title="Tracking and review">
           <details open><summary>Where can I see progress?</summary><p>Open My Applications and choose View details to see the recorded status, timeline, documents, and next action.</p></details>
-          <details><summary>How is my application routed?</summary><p>Applications are routed to the relevant department using the submitted application type and the configured department workflow.</p></details>
+          <details><summary>How is my application routed?</summary><p>Applications are routed to the relevant department using uploaded document content and the configured department workflow.</p></details>
           <details><summary>Can the chatbot see my application?</summary><p>No. The chatbot explains the website workflow but cannot access or change private application records.</p></details>
         </InfoCard>
       </section>
@@ -328,7 +326,6 @@ export function ApplicantHelpPage() {
 export function CreateApplicationPage() {
   const { user } = useAuth()
   const [application, setApplication] = useState<ApplicationRecord | null>(null)
-  const selectedService = defaultApplicantService
   const [step, setStep] = useState<'upload' | 'review' | 'complete'>('upload')
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [draggingFiles, setDraggingFiles] = useState(false)
@@ -357,15 +354,13 @@ export function CreateApplicationPage() {
     let targetApplication = application
     try {
       if (!targetApplication) {
-        const title = selectedService
         const applicantName = applicant?.displayName
         const contactEmail = applicant?.email
         if (!applicantName || !contactEmail) {
           throw new Error('Your applicant profile is missing required contact information. Update your profile or contact support.')
         }
         const applicationDraft: ApplicationDraft = {
-          applicationType: selectedService,
-          title,
+          title: 'Government Document Application',
           applicantName,
           contactEmail,
           details: 'Supporting document submitted for government service review.',
@@ -392,13 +387,13 @@ export function CreateApplicationPage() {
       }
     }
     setSelectedFiles(remaining)
-    setUploadStatus(messages.join(' '))
     try {
       const refreshed = await applicationService.getForApplicant(targetApplication.id)
       setApplication(refreshed)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Document status could not be refreshed.')
     } finally {
+      setUploadStatus(messages.join(' '))
       setUploading(false)
     }
   }
@@ -449,8 +444,8 @@ export function CreateApplicationPage() {
       {error && <ErrorState message={error} />}
       {step === 'upload' ? (
         <section className="panel form-panel">
-          <div className="applicant-stepper" aria-label="Application progress"><span className="applicant-stepper__active">1&nbsp; Select Service</span><i aria-hidden="true">→</i><span>2&nbsp; Upload Documents</span><i aria-hidden="true">→</i><span>3&nbsp; Review &amp; Submit</span></div>
-          <div className="form-section-heading"><span>01</span><div><h2>Select your service</h2><p className="muted">Choose a service and upload its supporting documents.</p></div></div>
+          <div className="applicant-stepper" aria-label="Application progress"><span className="applicant-stepper__active">1&nbsp; Upload Documents</span><i aria-hidden="true">→</i><span>2&nbsp; Review &amp; Submit</span></div>
+          <div className="form-section-heading"><span>01</span><div><h2>Upload your documents</h2><p className="muted">The uploaded document will be reviewed and routed to the appropriate department.</p></div></div>
           <div className="applicant-service-summary"><strong>Your account details will be used</strong><span>{user?.displayName} · {user?.email}</span><small>Update your profile if these details need to change.</small></div>
           <div
             className={`applicant-dropzone${draggingFiles ? ' applicant-dropzone--active' : ''}`}
@@ -493,7 +488,7 @@ export function CreateApplicationPage() {
         </section>
       ) : step === 'review' && application ? (
         <section className="panel form-panel">
-          <div className="form-section-heading"><span>03</span><div><h2>Review before submission</h2><p className="muted">Confirm your information and attached documents before submitting.</p></div></div>
+          <div className="form-section-heading"><span>02</span><div><h2>Review before submission</h2><p className="muted">Confirm your information and attached documents before submitting.</p></div></div>
           <ApplicationSummary application={application} />
           <p className="application-description">{application.details}</p>
           <InfoCard title="Supporting documents"><DocumentList documents={application.documents} />
@@ -528,6 +523,8 @@ export function ApplicantApplicationDetailsPage() {
   const [uploadError, setUploadError] = useState('')
   const [uploadMessage, setUploadMessage] = useState('')
   const [success, setSuccess] = useState('')
+  const [withdrawing, setWithdrawing] = useState(false)
+  const [actionError, setActionError] = useState('')
   async function load() {
     setLoading(true)
     setError('')
@@ -535,16 +532,31 @@ export function ApplicantApplicationDetailsPage() {
   }
   async function submitApplication() {
     setSubmitting(true)
-    setError('')
+    setActionError('')
     setSuccess('')
     try {
       const updated = await applicationService.submit(id)
       setApplication(updated)
       setSuccess('Your application has been submitted.')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'The application could not be submitted.')
+      setActionError(reason instanceof Error ? reason.message : 'The application could not be submitted.')
     } finally {
       setSubmitting(false)
+    }
+  }
+  async function withdrawApplication() {
+    if (!window.confirm('Withdraw this application? You will not be able to continue processing it.')) return
+    setWithdrawing(true)
+    setActionError('')
+    setSuccess('')
+    try {
+      const updated = await applicationService.withdraw(id)
+      setApplication(updated)
+      setSuccess('Your application has been withdrawn.')
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : 'The application could not be withdrawn.')
+    } finally {
+      setWithdrawing(false)
     }
   }
   async function uploadDocument() {
@@ -584,8 +596,9 @@ export function ApplicantApplicationDetailsPage() {
 
   return (
     <DashboardLayout area="applicant" title="Application details">
-      <PageHeader eyebrow="APPLICATION DETAILS" title={application?.title ?? 'Application'} description={application ? `${application.applicationType} · ${application.id}` : 'View the current information and workflow timeline.'} action={<Link className="button button--secondary" to="/applicant">← All applications</Link>} />
+      <PageHeader eyebrow="APPLICATION DETAILS" title={application?.title ?? 'Application'} description={application ? application.id : 'View the current information and workflow timeline.'} action={<Link className="button button--secondary" to="/applicant">← All applications</Link>} />
       {(successMessage || success) && <div className="form-alert" role="status">{success || successMessage}</div>}
+      {actionError && <ErrorState message={actionError} />}
       {loading || loadedId !== id ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void load()} /> : application && <>
         <div className="details-statusbar"><div><span className="muted">Current status</span><StatusBadge status={application.status} /></div><DeadlineIndicator deadlineAt={application.deadlineAt} breachedAt={application.breachedAt} /></div>
         {application.status === 'REJECTED' && application.rejectionReason && (
@@ -596,7 +609,8 @@ export function ApplicantApplicationDetailsPage() {
             )}
           </InfoCard>
         )}
-        {application.status === 'DRAFT' && <div className="form-actions"><button className="button button--primary" type="button" disabled={submitting} onClick={() => void submitApplication()}>{submitting ? 'Submitting…' : 'Submit application'}</button></div>}
+        {application.status === 'DRAFT' && <div className="form-actions"><button className="button button--primary" type="button" disabled={submitting || !application.documents.length} onClick={() => void submitApplication()}>{submitting ? 'Submitting…' : 'Submit application'}</button></div>}
+        {!['APPROVED', 'REJECTED', 'WITHDRAWN'].includes(application.status) && <div className="form-actions"><button className="button button--secondary" type="button" disabled={withdrawing || submitting} onClick={() => void withdrawApplication()}>{withdrawing ? 'Withdrawing…' : 'Withdraw application'}</button></div>}
         <InfoCard title="Application information"><ApplicationSummary application={application} /><p className="application-description">{application.details}</p></InfoCard>
         <InfoCard title="Application documents">
           <DocumentList documents={application.documents} />

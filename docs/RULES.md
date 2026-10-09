@@ -103,12 +103,13 @@ fallback, not a silent guess.
   verified field completeness at least 0.80, and acceptable OCR noise.
   At or above `OCR_THRESHOLD`, the quality/readability/noise checks still
   apply before the existing classification path.
-- Document-specific expected-field profiles are extensible; Health and
-  Income Certificates have separate profiles. Verified completeness is
-  calculated deterministically from clear field values, minimum field
-  confidence, and exact evidence contained in OCR. The model's reported
-  completeness does not substitute for this calculation. Model
-  confidence is not calibrated and cannot replace exact evidence.
+- Document-specific expected-field profiles are extensible; Health,
+  Income, Birth, Driving Licence, Caste, and Domicile Certificates have
+  separate profiles. Verified completeness is calculated deterministically
+  from clear field values, minimum field confidence, valid formats, and
+  exact evidence contained in OCR. The model's reported completeness does
+  not substitute for this calculation. Model confidence is not calibrated
+  and cannot replace exact evidence.
 - Unsupported low-confidence types, missing or uncertain fields,
   malformed/unavailable assessments, inconsistent results, and
   processing failures must enter Human Verification. The configured OCR
@@ -201,12 +202,26 @@ After backend routing selects a Department:
 
 ## 8. Deadline Rules
 
-- Applications requiring processing have a deadline.
-- Show deadline, remaining time where applicable, and breached/overdue
-  status as clear text; do not rely on color alone.
-- Deadline breach is independent of application status.
-- Do not invent SLA duration, grace period, post-breach consequence, or
-  notification rules before approval.
+- An Officer assignment and each assigned Human Verifier task receive a
+  five-calendar-day deadline from the backend-recorded assignment time.
+  UTC calendar arithmetic keeps due dates consistent across server time
+  zones and daylight-saving changes.
+- Unassigned queue items do not start a deadline. Reassignment closes the
+  previous owner's task record and creates a new assignment record; any
+  overdue responsibility remains attributed to the former owner.
+- Completing an assignment after its deadline records one persistent
+  demerit point against that task's owner. Completion within the deadline
+  does not incur a demerit. Overdue work does not automatically approve,
+  reject, or discard an application.
+- A background backend processor detects overdue tasks independently of
+  dashboard visits. Task, demerit, and audit records are persistent and
+  duplicate-safe; existing assignments are not backfilled.
+- An Admin may extend an active, not-yet-overdue task by a positive
+  whole number of calendar days with a required reason. Extensions retain
+  their history and create an audit event.
+- Show the deadline, remaining time, and breached/overdue status as clear
+  text; do not rely on color alone. The backend is authoritative for
+  assignment and due timestamps.
 
 ## 9. Security and Privacy Rules
 
@@ -223,9 +238,17 @@ After backend routing selects a Department:
 6. Never hard-code credentials, API keys, or tokens.
 7. Validate all input and apply authentication abuse controls.
 8. Use secure transport and least-privilege authorization.
-9. Do not send sensitive documents to an external OCR/AI provider
-   without approval of that provider and data flow.
-10. Audit important actions without placing secrets or unnecessary
+9. External document extraction is disabled by default. When explicitly
+   enabled, only backend-produced OCR text (not the original file) is sent
+   to the configured provider. Document the provider, data flow, and
+   retention/privacy terms before enabling it. Gemini's unpaid/free tier
+   may use prompts for product improvement and human review; use synthetic,
+   non-sensitive development data only. Production use of personal
+   certificate data requires an approved paid service and privacy review.
+10. Applicant application type is identified from recognized certificate
+    content, not selected in the upload form. Keep it separate from document
+    MIME type and OCR classification; do not bulk-update existing records.
+11. Audit important actions without placing secrets or unnecessary
     document contents in logs.
 
 ## 10. Admin Rules

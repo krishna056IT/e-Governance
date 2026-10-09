@@ -36,7 +36,7 @@ function sendVerificationError(res, error) {
 
 router.get('/applications', ...requireHumanVerifierRole, async (req, res) => {
   try {
-    const queue = await listHumanVerificationApplications(req.query.status || 'PENDING')
+    const queue = await listHumanVerificationApplications(req.query.status || 'PENDING', req.user)
     return res.json({ queue })
   } catch (error) {
     return sendVerificationError(res, error)
@@ -54,7 +54,7 @@ router.get('/departments', ...requireHumanVerifierRole, async (_req, res) => {
 
 router.get('/applications/:applicationId', ...requireHumanVerifierRole, async (req, res) => {
   try {
-    const application = await getHumanVerificationApplication(req.params.applicationId)
+    const application = await getHumanVerificationApplication(req.params.applicationId, req.user)
     if (!application) return res.status(404).json({ error: 'Application not found in the Human Verification queue.' })
     return res.json({ application })
   } catch (error) {
@@ -93,7 +93,7 @@ router.post('/applications/:applicationId/decision', ...requireHumanVerifierRole
 
 router.get('/', ...requireHumanVerifier, async (req, res) => {
   try {
-    const queue = await listPendingHumanVerifications(req.query.status || 'PENDING')
+    const queue = await listPendingHumanVerifications(req.query.status || 'PENDING', req.user)
     return res.json({ queue })
   } catch (error) {
     return sendVerificationError(res, error)
@@ -115,7 +115,7 @@ router.post('/:documentId/start-review', ...requireHumanVerifier, async (req, re
 
 router.get('/:documentId', ...requireHumanVerifier, async (req, res) => {
   try {
-    const review = await getPendingHumanVerification(req.params.documentId)
+    const review = await getPendingHumanVerification(req.params.documentId, req.user)
     if (!review) return res.status(404).json({ error: 'Document not found in the pending verification queue.' })
     return res.json({ review })
   } catch (error) {

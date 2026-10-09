@@ -86,7 +86,6 @@ test('application lifecycle records authenticated creation and valid submission 
   const createdResponse = await request('/api/applications', {
     method: 'POST',
     body: JSON.stringify({
-      applicationType: 'Residence certificate',
       title: 'Audit lifecycle application',
       applicantName: 'Audit Applicant',
       contactEmail: applicant.email,
@@ -142,7 +141,6 @@ test('application lifecycle records authenticated creation and valid submission 
 test('low-confidence documents block Officer Review until human verification resolves them', async () => {
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
     applicationData: {
       title: 'Low confidence lifecycle application',
       applicantName: applicant.displayName,

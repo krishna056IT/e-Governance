@@ -20,18 +20,19 @@ import {
 } from '../components/ui'
 import { officerReviewService } from '../services/officerReviewService'
 import type { ApplicationDocument, ApplicationRecord, ApplicationStatus } from '../types'
-import { useCurrentTime } from '../hooks/useCurrentTime'
 
 type OfficerDecision = 'APPROVED' | 'REJECTED' | 'ESCALATED'
 
-const isBreached = (application: ApplicationRecord, now: number) =>
+const isBreached = (application: ApplicationRecord) =>
   Boolean(application.breachedAt) ||
-  Boolean(application.deadlineAt && new Date(application.deadlineAt).getTime() < now)
+  ['OVERDUE', 'COMPLETED_OVERDUE', 'REASSIGNED_OVERDUE'].includes(application.staffTaskStatus || '') ||
+  (application.deadlineRemainingMs !== null && application.deadlineRemainingMs !== undefined &&
+    application.deadlineRemainingMs <= 0)
 
-const isDueSoon = (application: ApplicationRecord, now: number) => {
-  if (!application.deadlineAt || isBreached(application, now)) return false
-  const remaining = new Date(application.deadlineAt).getTime() - now
-  return remaining >= 0 && remaining <= 3 * 86_400_000
+const isDueSoon = (application: ApplicationRecord) => {
+  const remaining = application.deadlineRemainingMs
+  return Number.isFinite(remaining) && (remaining as number) <= 3 * 86_400_000 &&
+    (remaining as number) >= 0 && !isBreached(application)
 }
 
 function OfficerDocumentCard({ document }: { document: ApplicationDocument }) {
@@ -100,7 +101,6 @@ function OfficerDocumentCard({ document }: { document: ApplicationDocument }) {
 }
 
 function OfficerApplicationQueuePage() {
-  const currentTime = useCurrentTime()
   const [applications, setApplications] = useState<ApplicationRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -137,8 +137,8 @@ function OfficerApplicationQueuePage() {
         statusFilter === 'all' ||
         (statusFilter === 'ASSIGNED' && application.status === 'ASSIGNED') ||
         (statusFilter === 'UNDER_REVIEW' && application.status === 'UNDER_REVIEW') ||
-        (statusFilter === 'due-soon' && isDueSoon(application, currentTime)) ||
-        (statusFilter === 'breached' && isBreached(application, currentTime))
+        (statusFilter === 'due-soon' && isDueSoon(application)) ||
+        (statusFilter === 'breached' && isBreached(application))
       return matchesText && matchesStatus
     })
     return results.sort((left, right) => {
@@ -146,12 +146,12 @@ function OfficerApplicationQueuePage() {
       const rightDeadline = right.deadlineAt ? new Date(right.deadlineAt).getTime() : Number.POSITIVE_INFINITY
       return deadlineOrder === 'ascending' ? leftDeadline - rightDeadline : rightDeadline - leftDeadline
     })
-  }, [applications, currentTime, deadlineOrder, search, statusFilter])
+  }, [applications, deadlineOrder, search, statusFilter])
 
   const assignedCount = applications.filter((application) => application.status === 'ASSIGNED').length
   const reviewCount = applications.filter((application) => application.status === 'UNDER_REVIEW').length
-  const dueSoonCount = applications.filter((application) => isDueSoon(application, currentTime)).length
-  const breachedCount = applications.filter((application) => isBreached(application, currentTime)).length
+  const dueSoonCount = applications.filter((application) => isDueSoon(application)).length
+  const breachedCount = applications.filter((application) => isBreached(application)).length
 
   return (
     <DashboardLayout area="officer" title="Application queue">
@@ -172,7 +172,7 @@ function OfficerApplicationQueuePage() {
           <label className="filter-select"><span className="sr-only">Filter applications</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All assigned work</option><option value="ASSIGNED">Assigned</option><option value="UNDER_REVIEW">Under review</option><option value="due-soon">Due soon</option><option value="breached">Breached</option></select></label>
           <label className="filter-select"><span className="sr-only">Sort by deadline</span><select value={deadlineOrder} onChange={(event) => setDeadlineOrder(event.target.value)}><option value="ascending">Earliest deadline</option><option value="descending">Latest deadline</option></select></label>
         </div>
-        {loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void load()} /> : filtered.length ? <ApplicationTable applications={filtered} hrefFor={(application) => `/officer/applications/${application.id}`} /> : <EmptyState title="No matching applications" description="No review-ready applications match the current search or filters." />}
+        {loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void load()} /> : filtered.length ? <ApplicationTable applications={filtered} hrefFor={(application) => `/officer/applications/${application.id}`} showDeadlines /> : <EmptyState title="No matching applications" description="No review-ready applications match the current search or filters." />}
       </section>
     </DashboardLayout>
   )
@@ -265,12 +265,12 @@ export function OfficerApplicationDetailsPage() {
     <DashboardLayout area="officer" title="Application details">
       <PageHeader eyebrow="ASSIGNED APPLICATION" title={application?.title ?? 'Application'} description={application?.id} action={<Link className="button button--secondary" to="/officer">← Application queue</Link>} />
       {loading || loadedId !== id ? <LoadingState /> : error ? <ErrorState message={error} onRetry={() => void load()} /> : application && <>
-        <div className="details-statusbar"><div><span className="muted">Current status</span><StatusBadge status={application.status} /></div><DeadlineIndicator deadlineAt={application.deadlineAt} breachedAt={application.breachedAt} /></div>
+        <div className="details-statusbar"><div><span className="muted">Current status</span><StatusBadge status={application.status} /></div><DeadlineIndicator deadlineAt={application.deadlineAt} breachedAt={application.breachedAt} deadlineRemainingMs={application.deadlineRemainingMs} /></div>
         {actionError && <p className="form-alert form-alert--error" role="alert">{actionError}</p>}
         <InfoCard title="Application and applicant information">
           <ApplicationSummary application={application} />
           <p className="application-description">{application.details}</p>
-          <dl className="summary-grid"><div><dt>Applicant account</dt><dd>{application.applicant?.name || application.applicantName}</dd></div><div><dt>Applicant email</dt><dd>{application.applicant?.email || application.contactEmail}</dd></div><div><dt>Application type</dt><dd>{application.applicationType}</dd></div><div><dt>Department scope</dt><dd>{application.departmentId}</dd></div></dl>
+          <dl className="summary-grid"><div><dt>Applicant account</dt><dd>{application.applicant?.name || application.applicantName}</dd></div><div><dt>Applicant email</dt><dd>{application.applicant?.email || application.contactEmail}</dd></div><div><dt>Department scope</dt><dd>{application.departmentId}</dd></div></dl>
         </InfoCard>
         <InfoCard title="Submitted documents">
           {application.documents.length ? <div className="officer-documents">{application.documents.map((document) => <OfficerDocumentCard key={document.id} document={document} />)}</div> : <p className="muted">No documents are attached to this application.</p>}

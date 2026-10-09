@@ -8,6 +8,7 @@ import {
   getApplicantApplication,
   listApplicantApplications,
   submitApplicantApplication,
+  withdrawApplicantApplication,
 } from '../services/applicationService.mjs'
 
 const router = Router()
@@ -82,6 +83,16 @@ router.post('/', async (req, res) => {
 router.post('/:id/submit', async (req, res) => {
   try {
     const application = await submitApplicantApplication(req.user, req.params.id)
+    if (!application) return res.status(404).json({ error: 'Application not found.' })
+    return res.json({ application })
+  } catch (error) {
+    return sendApplicationError(res, error)
+  }
+})
+
+router.post('/:id/withdraw', async (req, res) => {
+  try {
+    const application = await withdrawApplicantApplication(req.user, req.params.id)
     if (!application) return res.status(404).json({ error: 'Application not found.' })
     return res.json({ application })
   } catch (error) {

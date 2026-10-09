@@ -6,6 +6,7 @@ import { useCurrentTime } from '../hooks/useCurrentTime'
 
 const statusLabels: Record<ApplicationStatus, string> = {
   DRAFT: 'Draft',
+  WITHDRAWN: 'Withdrawn',
   SUBMITTED: 'Submitted',
   PROCESSING: 'Processing',
   HUMAN_VERIFICATION: 'Human Verification Required',
@@ -27,9 +28,13 @@ export function StatusBadge({ status }: { status: ApplicationStatus }) {
   return <span className={`status-badge status-badge--${status.toLowerCase().replaceAll('_', '-')}`}>{statusLabels[status]}</span>
 }
 
-export function DeadlineIndicator({ deadlineAt, breachedAt }: Pick<ApplicationRecord, 'deadlineAt' | 'breachedAt'>) {
+export function DeadlineIndicator({
+  deadlineAt,
+  breachedAt,
+  deadlineRemainingMs,
+}: Pick<ApplicationRecord, 'deadlineAt' | 'breachedAt' | 'deadlineRemainingMs'>) {
   const currentTime = useCurrentTime()
-  const summary = deadlineService.summarize(deadlineAt, breachedAt, currentTime)
+  const summary = deadlineService.summarize(deadlineAt, breachedAt, currentTime, deadlineRemainingMs)
   if (!summary.deadlineAt) return <div className="deadline"><span className="deadline__label">Deadline</span><span>Not assigned</span></div>
 
   return (
@@ -119,18 +124,26 @@ export function OcrTextDisplay({ text }: { text?: string | null }) {
   )
 }
 
-export function ApplicationTable({ applications, hrefFor }: { applications: ApplicationRecord[]; hrefFor: (application: ApplicationRecord) => string }) {
+export function ApplicationTable({
+  applications,
+  hrefFor,
+  showDeadlines = false,
+}: {
+  applications: ApplicationRecord[]
+  hrefFor: (application: ApplicationRecord) => string
+  showDeadlines?: boolean
+}) {
   if (!applications.length) return <EmptyState title="No applications to show" description="Applications will appear here when available." />
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr><th>Application</th><th>Type</th><th>Applicant</th><th>Status</th><th>Created</th><th>Submitted</th><th>Updated</th><th><span className="sr-only">Open</span></th></tr></thead>
+        <thead><tr><th>Application</th><th>Applicant</th><th>Status</th>{showDeadlines && <th>Deadline</th>}<th>Created</th><th>Submitted</th><th>Updated</th><th><span className="sr-only">Open</span></th></tr></thead>
         <tbody>{applications.map((application) => (
           <tr key={application.id}>
             <td><Link className="application-link" to={hrefFor(application)}><strong>{application.title}</strong><span>{application.id}</span></Link></td>
-            <td>{application.applicationType}</td>
             <td>{application.applicantName}</td>
             <td><StatusBadge status={application.status} /></td>
+            {showDeadlines && <td><DeadlineIndicator deadlineAt={application.deadlineAt} breachedAt={application.breachedAt} deadlineRemainingMs={application.deadlineRemainingMs} /></td>}
             <td>{new Date(application.createdAt).toLocaleDateString()}</td>
             <td>{application.submittedAt ? new Date(application.submittedAt).toLocaleDateString() : 'Not submitted'}</td>
             <td>{new Date(application.updatedAt).toLocaleDateString()}</td>
@@ -150,7 +163,12 @@ export function DocumentList({ documents }: { documents: ApplicationRecord['docu
       : document.status === 'LOW_CONFIDENCE'
         ? 'Processing review'
         : document.status
-    return <li key={document.id}><span className="document-list__icon" aria-hidden="true">▤</span><span className="document-list__name">{document.name}{document.applicationId && <small>Application ID: {document.applicationId} · Type: {document.applicationType || 'Unavailable'}</small>}<small>{document.mimeType} · {status}{!document.humanVerificationRequired && document.status === 'COMPLETED' ? ' · Human Verification not required' : ''}</small></span><span className="document-list__date">{new Date(document.addedAt).toLocaleDateString()}</span></li>
+    return <li key={document.id}><span className="document-list__icon" aria-hidden="true">▤</span><span className="document-list__name">{document.name}{document.applicationId && (
+  <small>
+    Application ID: {document.applicationId} ·
+    Document: {document.documentType || 'Unknown — Requires Verification'}
+  </small>
+)}<small>{document.mimeType} · {status}{!document.humanVerificationRequired && document.status === 'COMPLETED' ? ' · Human Verification not required' : ''}</small></span><span className="document-list__date">{new Date(document.addedAt).toLocaleDateString()}</span></li>
   })}</ul>
 }
 
@@ -215,5 +233,5 @@ export function InfoCard({ title, children }: { title: string; children: ReactNo
 }
 
 export function ApplicationSummary({ application }: { application: ApplicationRecord }) {
-  return <dl className="summary-grid"><div><dt>Application type</dt><dd>{application.applicationType}</dd></div><div><dt>Applicant</dt><dd>{application.applicantName}</dd></div><div><dt>Contact email</dt><dd>{application.contactEmail}</dd></div><div><dt>Department</dt><dd>{application.department ?? 'Not yet determined'}</dd></div><div><dt>Assigned Officer</dt><dd>{application.assignedOfficerName ?? 'Not yet assigned'}</dd></div><div><dt>Workflow status</dt><dd><StatusBadge status={application.status} /></dd></div></dl>
+  return <dl className="summary-grid"><div><dt>Applicant</dt><dd>{application.applicantName}</dd></div><div><dt>Contact email</dt><dd>{application.contactEmail}</dd></div><div><dt>Department</dt><dd>{application.department ?? 'Not yet determined'}</dd></div><div><dt>Assigned Officer</dt><dd>{application.assignedOfficerName ?? 'Not yet assigned'}</dd></div><div><dt>Workflow status</dt><dd><StatusBadge status={application.status} /></dd></div></dl>
 }

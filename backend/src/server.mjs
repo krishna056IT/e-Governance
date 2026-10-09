@@ -1,11 +1,13 @@
 import app from './app.mjs'
 import { env } from './config/env.mjs'
 import { connectDatabase } from './config/database.mjs'
+import { startOverdueStaffTaskProcessor } from './services/staffTaskService.mjs'
 
 const port = env.PORT
 
 async function startServer() {
   await connectDatabase()
+  startOverdueStaffTaskProcessor()
   app.listen(port, () => {
     console.log(`HacKBios backend running on http://localhost:${port}`)
   })

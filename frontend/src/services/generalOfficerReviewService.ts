@@ -21,7 +21,6 @@ interface DashboardResponse {
 interface SubmissionResponse {
   application: ApplicationRecord
   receipt: {
-    applicationType: string
     applicationId: string
     applicantName: string
   }

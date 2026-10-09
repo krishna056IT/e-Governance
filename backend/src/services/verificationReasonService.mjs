@@ -3,6 +3,7 @@ export const VERIFICATION_REASON_CODES = Object.freeze([
   'OCR_BELOW_MINIMUM_SAFE',
   'OCR_PROCESSING_FAILED',
   'AI_CLASSIFICATION_FAILED',
+  'AI_EXTRACTION_FAILED',
   'UNKNOWN_DEPARTMENT',
   'INVALID_AI_CLASSIFICATION',
   'INSUFFICIENT_OCR_TEXT',
@@ -33,6 +34,10 @@ const reasonContent = {
   AI_CLASSIFICATION_FAILED: {
     message: 'AI document classification could not be completed.',
     action: 'The document was successfully processed by OCR, but automatic document classification could not be completed. Please verify the document and determine the appropriate department.',
+  },
+  AI_EXTRACTION_FAILED: {
+    message: 'Structured document extraction could not be completed.',
+    action: 'Review the original document and extracted OCR text, then enter or verify the required certificate fields.',
   },
   UNKNOWN_DEPARTMENT: {
     message: 'Department could not be determined automatically.',

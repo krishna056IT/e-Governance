@@ -4,6 +4,8 @@ import mongoose from 'mongoose'
 import { env } from '../config/env.mjs'
 import { assessOcrConfidence } from '../processing/ocrConfidenceGate.mjs'
 import { recognizeDocument } from '../processing/localOcr.mjs'
+import { extractDocumentInformation, DocumentExtractionError } from './documentExtractionService.mjs'
+import { validateExtractedFields } from './documentQualityService.mjs'
 import Application from '../models/Application.mjs'
 import Document from '../models/Document.mjs'
 import { createAuditEvent } from './auditService.mjs'
@@ -66,6 +68,8 @@ export function serializeDocument(document) {
     ocrThreshold: document.ocrThreshold,
     humanVerificationRequired: document.humanVerificationRequired,
     humanVerificationStatus: document.humanVerificationStatus,
+    extractionStatus: document.extractionStatus,
+    extractionFailureCode: document.extractionFailureCode,
   }
 }
 
@@ -87,7 +91,7 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
     })
     if (duplicate) {
       throw requestError(
-        `This file is already included in your active ${duplicate.applicationType} application. You can submit it again after that application is rejected or completed.`,
+      'This file is already included in another active application. You can submit it again after that application is rejected, completed, or withdrawn.',
         409,
       )
     }
@@ -122,6 +126,69 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
   try {
     const original = await readOriginal(storageId, extension)
     const { text, confidence, diagnostics } = await recognizeDocument({ buffer: original, mimeType })
+    let extractedDocumentType = null
+    let extractedFields = []
+    let extractionStatus = 'NOT_CONFIGURED'
+    let extractionFailureCode = null
+    let extractionFallbackUsed = false
+
+    if (env.DOCUMENT_EXTRACTION_PROVIDER === 'gemini') {
+      try {
+        const extracted = await extractDocumentInformation({
+          text,
+        })
+        extractedDocumentType = extracted.documentType
+        extractedFields = validateExtractedFields({
+          documentType: extracted.documentType,
+          fields: extracted.fields,
+          ocrText: text,
+          minimumFieldConfidence: Number(env.AI_CRITICAL_FIELD_MIN_CONFIDENCE),
+        })
+        extractionStatus = 'COMPLETED'
+      } catch (error) {
+        extractionStatus = 'FAILED'
+        extractionFailureCode = error instanceof DocumentExtractionError
+          ? error.code
+          : 'EXTRACTION_FAILED'
+        extractionFallbackUsed = env.DOCUMENT_EXTRACTION_FALLBACK_TO_TESSERACT === 'true'
+        document.humanVerificationRequired = true
+        document.humanVerificationStatus = 'PENDING'
+        if (!extractionFallbackUsed) {
+          document.ocrStatus = 'FAILED'
+          document.ocrFailureCode = 'DOCUMENT_EXTRACTION_FAILED'
+        }
+        console.warn('[DOCUMENT_EXTRACTION]', JSON.stringify({
+          applicationId: String(application._id),
+          documentId: String(document._id),
+          status: extractionStatus,
+          failureCode: extractionFailureCode,
+          tesseractFallbackUsed: extractionFallbackUsed,
+        }))
+      }
+    } else if (env.DOCUMENT_EXTRACTION_PROVIDER !== 'tesseract') {
+      extractionStatus = 'FAILED'
+      extractionFailureCode = 'INVALID_CONFIGURATION'
+      extractionFallbackUsed = env.DOCUMENT_EXTRACTION_FALLBACK_TO_TESSERACT === 'true'
+      document.humanVerificationRequired = true
+      document.humanVerificationStatus = 'PENDING'
+      if (!extractionFallbackUsed) {
+        document.ocrStatus = 'FAILED'
+        document.ocrFailureCode = 'DOCUMENT_EXTRACTION_FAILED'
+      }
+      console.error('[DOCUMENT_EXTRACTION]', JSON.stringify({
+        applicationId: String(application._id),
+        documentId: String(document._id),
+        status: extractionStatus,
+        failureCode: extractionFailureCode,
+        tesseractFallbackUsed: extractionFallbackUsed,
+      }))
+    }
+
+    if (extractionStatus === 'COMPLETED' &&
+        (!extractedDocumentType || extractedFields.some((field) => field.status !== 'CLEAR'))) {
+      document.humanVerificationRequired = true
+      document.humanVerificationStatus = 'PENDING'
+    }
     if (env.NODE_ENV !== 'production') {
       console.info('[DOCUMENT_OCR]', JSON.stringify({
         applicationId: String(application._id),
@@ -144,11 +211,22 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
     const assessment = assessOcrConfidence(confidence)
     const extractedTextStorageId = await storeExtractedText(randomUUID(), text)
     document.extractedTextStorageId = extractedTextStorageId
-    document.ocrStatus = assessment.ocrStatus
+    if (extractionStatus !== 'FAILED' || extractionFallbackUsed) {
+      document.ocrStatus = assessment.ocrStatus
+      document.ocrFailureCode = null
+    }
     document.ocrConfidence = assessment.ocrScore
     document.ocrThreshold = assessment.ocrThreshold
-    document.humanVerificationRequired = assessment.humanVerificationRequired
-    document.humanVerificationStatus = assessment.humanVerificationStatus
+    document.extractedDocumentType = extractedDocumentType
+    document.extractedFields = extractedFields
+    document.extractionStatus = extractionStatus
+    document.extractionFailureCode = extractionFailureCode
+    document.humanVerificationRequired ||= assessment.humanVerificationRequired
+    if (document.humanVerificationRequired) {
+      document.humanVerificationStatus ||= 'PENDING'
+    } else {
+      document.humanVerificationStatus = assessment.humanVerificationStatus
+    }
     await document.save()
   } catch (error) {
     document.ocrStatus = 'FAILED'
@@ -174,10 +252,16 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
     applicationId: application._id,
     documentId: document._id,
     actor,
-    action: 'OCR_COMPLETED',
+    action: document.ocrStatus === 'FAILED' ? 'OCR_FAILED' : 'OCR_COMPLETED',
     previousStatus: 'PROCESSING',
     newStatus: document.ocrStatus,
-    reason: `Confidence ${document.ocrConfidence}; threshold ${document.ocrThreshold}.`,
+    reason: [
+      `Confidence ${document.ocrConfidence}; threshold ${document.ocrThreshold}.`,
+      ...(document.extractionStatus === 'NOT_CONFIGURED'
+        ? []
+        : [`Structured extraction ${document.extractionStatus.toLowerCase()}${document.extractionFailureCode ? ` (${document.extractionFailureCode})` : ''}.`]),
+      ...(document.ocrStatus === 'FAILED' ? ['Tesseract fallback is disabled.'] : []),
+    ].join(' '),
   })
   return serializeDocument(document)
 }

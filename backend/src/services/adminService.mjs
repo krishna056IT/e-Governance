@@ -4,6 +4,7 @@ import mongoose from 'mongoose'
 import Application from '../models/Application.mjs'
 import Department from '../models/Department.mjs'
 import User from '../models/User.mjs'
+import Demerit from '../models/Demerit.mjs'
 import { ROLE_PERMISSIONS, serializeUser } from './authService.mjs'
 import { createAuditEvent } from './auditService.mjs'
 import { INITIAL_DEPARTMENTS } from './departmentSeedService.mjs'
@@ -164,7 +165,14 @@ export async function getAdminOverview() {
 
 export async function listUsers() {
   const users = await User.find({}).sort({ createdAt: -1 }).lean()
-  return users.map((user) => serializeUser(user))
+  const totals = await Demerit.aggregate([
+    { $group: { _id: '$staffId', points: { $sum: '$points' } } },
+  ])
+  const pointsByStaffId = new Map(totals.map(({ _id, points }) => [String(_id), points]))
+  return users.map((user) => ({
+    ...serializeUser(user),
+    demeritPoints: pointsByStaffId.get(String(user._id)) || 0,
+  }))
 }
 
 export async function getUserById(userId) {
@@ -173,7 +181,11 @@ export async function getUserById(userId) {
   }
   const user = await User.findById(userId).lean()
   if (!user) throw requestError('User not found.', 404)
-  return serializeUser(user)
+  const [{ points = 0 } = {}] = await Demerit.aggregate([
+    { $match: { staffId: user._id } },
+    { $group: { _id: null, points: { $sum: '$points' } } },
+  ])
+  return { ...serializeUser(user), demeritPoints: points }
 }
 
 export async function createStaffUser({ actor, email, password, displayName, role, departmentId, governmentOfficerId }) {

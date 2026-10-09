@@ -9,7 +9,6 @@ const dateFromNow = (days: number) => {
 const seedApplications: ApplicationRecord[] = [
   {
     id: 'APP-1048',
-    applicationType: 'Residence document request',
     applicantId: 'demo-applicant',
     title: 'Residence document request',
     applicantName: 'Maya Patel',
@@ -20,8 +19,8 @@ const seedApplications: ApplicationRecord[] = [
     deadlineAt: dateFromNow(2),
     breachedAt: null,
     documents: [
-      { id: 'DOC-1', applicationId: 'APP-1048', applicationType: 'Residence document request', name: 'residence-proof.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
-      { id: 'DOC-2', applicationId: 'APP-1048', applicationType: 'Residence document request', name: 'supporting-record.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-1', applicationId: 'APP-1048', name: 'residence-proof.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-2', applicationId: 'APP-1048', name: 'supporting-record.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
     ],
     timeline: [
       { id: 'EV-1', label: 'Application submitted', at: dateFromNow(-2) },
@@ -33,7 +32,6 @@ const seedApplications: ApplicationRecord[] = [
   },
   {
     id: 'APP-1042',
-    applicationType: 'Property record update',
     applicantId: 'demo-applicant-2',
     title: 'Property record update',
     applicantName: 'Arun Das',
@@ -44,7 +42,7 @@ const seedApplications: ApplicationRecord[] = [
     deadlineAt: dateFromNow(-1),
     breachedAt: dateFromNow(0),
     documents: [
-      { id: 'DOC-3', applicationId: 'APP-1042', applicationType: 'Property record update', name: 'property-record.pdf', status: 'Submitted', addedAt: dateFromNow(-6), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-3', applicationId: 'APP-1042', name: 'property-record.pdf', status: 'Submitted', addedAt: dateFromNow(-6), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
     ],
     timeline: [
       { id: 'EV-4', label: 'Application submitted', at: dateFromNow(-6) },
@@ -58,7 +56,6 @@ const seedApplications: ApplicationRecord[] = [
   },
   {
     id: 'APP-1031',
-    applicationType: 'Application awaiting assignment',
     applicantId: 'demo-applicant-4',
     title: 'Application awaiting assignment',
     applicantName: 'Nila Sen',

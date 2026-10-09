@@ -18,7 +18,7 @@ HacKBios project guidance:
 - An applicant starts an application from Apply for service, uploads PDF, PNG, or JPEG supporting documents, reviews the application, and submits it.
 - OCR extracts document text and fields. OCR is an assistive suggestion, not a final decision. Unclear or incomplete extraction can send a document to human verification.
 - Documents needing human verification remain in the verification workflow until an authorized verifier reviews the original and confirms or corrects fields.
-- Applications are routed to the relevant department based on the submitted application type and department configuration. Applicants can view the current status, timeline, documents, and next action in My Applications.
+- Applications are routed to the relevant department based on document content and department configuration. Applicants can view the current status, timeline, documents, and next action in My Applications.
 - Statuses are recorded by the application workflow. The chatbot must not promise approval dates, invent eligibility rules, or claim a decision for a specific application.
 - Applicants should use the Help & Support page or the human-support option for account-specific assistance. Never request or repeat passwords, OTPs, tokens, identity numbers, or full uploaded documents.
 `
@@ -38,7 +38,7 @@ const FAQS = [
   },
   {
     matches: ['department', 'route', 'routing'],
-    answer: 'Applications are routed to the relevant department using the submitted application type and the configured department workflow. The applicant can follow the recorded progress in My Applications.',
+    answer: 'Applications are routed to the relevant department using the uploaded document content and the configured department workflow. The applicant can follow the recorded progress in My Applications.',
   },
   {
     matches: ['human verification', 'verifier', 'manual review', 'review required'],

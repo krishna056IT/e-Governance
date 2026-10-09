@@ -67,6 +67,18 @@ const qualityAssessmentSchema = new mongoose.Schema(
   { _id: false },
 )
 
+const extractedFieldSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true, maxlength: 100 },
+    status: { type: String, required: true, enum: ['CLEAR', 'UNCERTAIN', 'MISSING'] },
+    confidence: { type: Number, min: 0, max: 1, default: null },
+    value: { type: String, default: null, maxlength: 2000 },
+    evidence: { type: String, default: null, maxlength: 500 },
+    validationIssue: { type: String, default: null, maxlength: 200 },
+  },
+  { _id: false },
+)
+
 const documentSchema = new mongoose.Schema(
   {
     applicationId: {
@@ -117,6 +129,28 @@ const documentSchema = new mongoose.Schema(
       type: String,
       default: null,
       select: false,
+    },
+    extractedDocumentType: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+      default: null,
+      select: false,
+    },
+    extractedFields: {
+      type: [extractedFieldSchema],
+      default: [],
+      select: false,
+    },
+    extractionStatus: {
+      type: String,
+      enum: ['NOT_CONFIGURED', 'COMPLETED', 'FAILED'],
+      default: 'NOT_CONFIGURED',
+      index: true,
+    },
+    extractionFailureCode: {
+      type: String,
+      default: null,
     },
     ocrStatus: {
       type: String,
