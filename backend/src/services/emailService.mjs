@@ -25,13 +25,17 @@ export async function sendOfficerSetupLink({
   setupPath,
   expiresAt,
 }) {
-  const isHumanVerifier = role === 'HUMAN_VERIFIER'
+  const accountLabel = role === 'HUMAN_VERIFIER'
+    ? 'Human Verifier'
+    : role === 'GENERAL_OFFICER'
+      ? 'General Officer'
+      : 'Officer'
   const message = {
     to: email,
-    subject: `Set up your HacKBios ${isHumanVerifier ? 'Human Verifier' : 'Officer'} password`,
-    text: `Use this one-time link to set up your HacKBios ${isHumanVerifier ? 'Human Verifier' : 'Officer'} password: ${setupPath}`,
+    subject: `Set up your HacKBios ${accountLabel} password`,
+    text: `Use this one-time link to set up your HacKBios ${accountLabel} password: ${setupPath}`,
     metadata: {
-      type: isHumanVerifier ? 'HUMAN_VERIFIER_PASSWORD_SETUP' : 'OFFICER_PASSWORD_SETUP',
+      type: `${role}_PASSWORD_SETUP`,
       governmentOfficerId,
       expiresAt: expiresAt.toISOString(),
     },
@@ -57,7 +61,42 @@ export async function sendOfficerSetupLink({
     setupPath: message.setupPath,
     expiresAt: new Date(Date.now() + developmentPreviewLifetimeMs),
   })
-  return { delivered: true, developmentPreviewId }
+  return { delivered: true, developmentPreviewId, setupPath: message.setupPath }
+}
+
+export async function sendPasswordResetLink({ email, role, resetPath, expiresAt }) {
+  const accountLabel = role === 'APPLICANT'
+    ? 'Applicant'
+    : role === 'GENERAL_OFFICER'
+      ? 'General Officer'
+      : role === 'HUMAN_VERIFIER'
+        ? 'Human Verifier'
+        : role === 'ADMIN'
+          ? 'Admin'
+          : 'Officer'
+  const message = {
+    to: email,
+    subject: `Reset your HacKBios ${accountLabel} password`,
+    text: `Use this one-time link to reset your HacKBios ${accountLabel} password: ${resetPath}`,
+    metadata: {
+      type: 'PASSWORD_RESET',
+      role,
+      expiresAt: expiresAt.toISOString(),
+    },
+    resetPath,
+  }
+
+  if (officerEmailSender) {
+    await officerEmailSender(message)
+  } else if (env.NODE_ENV !== 'development') {
+    const error = new Error('Password reset email delivery is not configured.')
+    error.statusCode = 503
+    throw error
+  }
+
+  if (env.NODE_ENV !== 'development') return { delivered: true }
+
+  return { delivered: true, resetPath: message.resetPath }
 }
 
 export function getDevelopmentOfficerEmailPreview(previewId) {

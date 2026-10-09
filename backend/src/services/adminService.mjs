@@ -107,18 +107,58 @@ async function ensureDepartmentAssignment(role, departmentId) {
 }
 
 export async function getAdminOverview() {
-  const [applicationCount, departmentCount, userCount, activeAdminCount] = await Promise.all([
+  const [applicationCount, departmentCount, userCount, activeAdminCount, processingTotals] = await Promise.all([
     Application.countDocuments(),
     Department.countDocuments(),
     User.countDocuments(),
     countActiveAdmins(),
+    Application.aggregate([
+      { $match: { processingDecision: { $in: ['AUTO_PROCESSED', 'HUMAN_VERIFICATION'] } } },
+      {
+        $group: {
+          _id: null,
+          autoProcessedCount: {
+            $sum: { $cond: [{ $eq: ['$processingDecision', 'AUTO_PROCESSED'] }, 1, 0] },
+          },
+          humanVerificationCount: {
+            $sum: { $cond: [{ $eq: ['$processingDecision', 'HUMAN_VERIFICATION'] }, 1, 0] },
+          },
+          requiredFieldCount: { $sum: '$automationAssessment.requiredFieldCount' },
+          completeFieldCount: { $sum: '$automationAssessment.completeFieldCount' },
+          evidenceSupportedFieldCount: { $sum: '$automationAssessment.evidenceSupportedFieldCount' },
+          confidenceQualifiedFieldCount: { $sum: '$automationAssessment.confidenceQualifiedFieldCount' },
+        },
+      },
+    ]),
   ])
+  const totals = processingTotals[0] || {}
+  const decisionedApplicationCount = (totals.autoProcessedCount || 0) + (totals.humanVerificationCount || 0)
+  const requiredFieldCount = totals.requiredFieldCount || 0
+  const toPercentage = (numerator, denominator) => denominator
+    ? Math.round((numerator / denominator) * 1000) / 10
+    : null
 
   return {
     applicationCount,
     departmentCount,
     userCount,
     activeAdminCount,
+    automationMetrics: {
+      decisionedApplicationCount,
+      autoProcessedCount: totals.autoProcessedCount || 0,
+      humanVerificationCount: totals.humanVerificationCount || 0,
+      automationRate: toPercentage(totals.autoProcessedCount || 0, decisionedApplicationCount),
+      requiredFieldCount,
+      completeFieldCount: totals.completeFieldCount || 0,
+      evidenceSupportedFieldCount: totals.evidenceSupportedFieldCount || 0,
+      confidenceQualifiedFieldCount: totals.confidenceQualifiedFieldCount || 0,
+      fieldCompletenessRate: toPercentage(totals.completeFieldCount || 0, requiredFieldCount),
+      evidenceSupportRate: toPercentage(totals.evidenceSupportedFieldCount || 0, requiredFieldCount),
+      fieldConfidenceQualificationRate: toPercentage(
+        totals.confidenceQualifiedFieldCount || 0,
+        requiredFieldCount,
+      ),
+    },
   }
 }
 
@@ -147,6 +187,9 @@ export async function createStaffUser({ actor, email, password, displayName, rol
   }
   if (normalizedRole === 'HUMAN_VERIFIER') {
     throw requestError('Human Verifiers must complete self-registration and receive Admin approval.', 400)
+  }
+  if (normalizedRole === 'GENERAL_OFFICER') {
+    throw requestError('General Officers must register with a Government Officer ID and receive Admin approval.', 400)
   }
   const normalizedEmail = String(email || '').trim().toLowerCase()
   if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
@@ -219,7 +262,7 @@ export async function updateStaffUser({ actor, userId, updates = {}, allowStatus
   if (!isStaffUser && !(currentUser.role === 'ADMIN' && statusRequested && !staffFieldsRequested)) {
     throw requestError('Only staff users can be updated or activated.', 400)
   }
-  if (['OFFICER', 'HUMAN_VERIFIER'].includes(currentUser.role) &&
+  if (['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'].includes(currentUser.role) &&
       ['PENDING', 'REJECTED'].includes(currentUser.accountStatus) &&
       statusRequested) {
     throw requestError('Pending or rejected Officers can only be activated through registration approval.', 409)
@@ -241,6 +284,9 @@ export async function updateStaffUser({ actor, userId, updates = {}, allowStatus
     }
     if (nextRole === 'HUMAN_VERIFIER' && currentUser.role !== 'HUMAN_VERIFIER') {
       throw requestError('Human Verifier role assignments can only be made through the registration approval flow.', 400)
+    }
+    if (nextRole === 'GENERAL_OFFICER' && currentUser.role !== 'GENERAL_OFFICER') {
+      throw requestError('General Officers must register with a Government Officer ID and receive Admin approval.', 400)
     }
     if (!DEPARTMENT_STAFF_ROLES.has(nextRole)) {
       throw requestError('Human Verifiers do not have Department assignments.', 400)

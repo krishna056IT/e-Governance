@@ -20,8 +20,10 @@ import {
   approveOfficerRegistration,
   getOfficerRegistration,
   listOfficerRegistrations,
+  reissueOfficerPasswordSetup,
   rejectOfficerRegistration,
 } from '../services/officerRegistrationService.mjs'
+import { retryWaitingApplicationAssignment } from '../services/applicationAssignmentService.mjs'
 
 const router = Router()
 router.use(requireAuth, requireRole('ADMIN'))
@@ -79,6 +81,18 @@ router.post('/officer-registrations/:userId/approve', requirePermission('USER_MA
   }
 })
 
+router.post('/officer-registrations/:userId/reissue-setup', requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const result = await reissueOfficerPasswordSetup({
+      actor: req.user,
+      userId: req.params.userId,
+    })
+    return res.json(result)
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
 router.post('/officer-registrations/:userId/reject', requirePermission('USER_MANAGE'), async (req, res) => {
   try {
     const registration = await rejectOfficerRegistration({
@@ -96,6 +110,20 @@ router.get('/users/:userId', requirePermission('USER_MANAGE'), async (req, res) 
   try {
     const user = await getUserById(req.params.userId)
     return res.json({ user })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.post('/applications/:applicationId/retry-assignment', requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const result = await retryWaitingApplicationAssignment(req.params.applicationId, req.user)
+    if (!result) return res.status(404).json({ error: 'Application not found.' })
+    return res.json({
+      status: result.application.status,
+      department: result.department,
+      assignedOfficerId: result.assignedOfficer,
+    })
   } catch (error) {
     return sendAdminError(res, error)
   }

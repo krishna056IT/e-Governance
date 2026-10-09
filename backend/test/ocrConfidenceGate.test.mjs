@@ -36,10 +36,10 @@ function documentWithScore(ocrScore) {
   }
 }
 
-for (const score of [95, 90]) {
+for (const score of [75, 80, 90]) {
   test(`OCR score ${score}% continues through understanding, routing, and assignment`, async () => {
     const services = createServices()
-    const result = await processOcrResult(documentWithScore(score), services, 90)
+    const result = await processOcrResult(documentWithScore(score), services, 75)
     assert.equal(result.outcome, 'ASSIGNED')
     assert.deepEqual(services.calls.map(([name]) => name), [
       'persist', 'understand', 'classify', 'route', 'assign',
@@ -47,17 +47,17 @@ for (const score of [95, 90]) {
   })
 }
 
-test('OCR score 89% enters human verification and cannot reach automatic routing', async () => {
+test('OCR score below 75% enters human verification and cannot reach automatic routing', async () => {
   const services = createServices()
-  const result = await processOcrResult(documentWithScore(89), services, 90)
+  const result = await processOcrResult(documentWithScore(74.99), services, 75)
   assert.equal(result.outcome, 'HUMAN_VERIFICATION_REQUIRED')
   assert.equal(result.document.humanVerificationRequired, true)
   assert.deepEqual(services.calls.map(([name]) => name), ['persist-and-queue'])
-  assert.equal(services.calls[0][1].queueEntry.ocrThreshold, 90)
+  assert.equal(services.calls[0][1].queueEntry.ocrThreshold, 75)
   assert.equal(services.calls[0][1].queueEntry.originalDocumentReference, 'private://document-1')
   assert.equal(services.calls[0][1].queueEntry.humanVerificationStatus, 'PENDING')
   assert.throws(
-    () => assertAutomaticRoutingAllowed(result.document, 90),
+    () => assertAutomaticRoutingAllowed(result.document, 75),
     /blocked until human verification succeeds/,
   )
 })
@@ -180,6 +180,7 @@ test('queue and private original access require human-verification authorization
 
 test('OCR threshold defaults to 90 and can be configured safely', () => {
   assert.equal(getOcrThreshold({}), 90)
+  assert.equal(getOcrThreshold({ OCR_THRESHOLD: '75' }), 75)
   assert.equal(getOcrThreshold({ OCR_THRESHOLD: '92' }), 92)
   assert.throws(() => getOcrThreshold({ OCR_THRESHOLD: '101' }), /between 0 and 100/)
 })

@@ -94,7 +94,10 @@ const validApplication = {
   details: 'Please review my residence certificate application.',
 }
 
-async function createApplication(token, data = validApplication) {
+async function createApplication(token, data = {
+  ...validApplication,
+  applicationType: `Residence certificate ${new mongoose.Types.ObjectId()}`,
+}) {
   return fetch(`${baseUrl}/api/applications`, {
     method: 'POST',
     headers: {
@@ -151,9 +154,21 @@ async function createDraft(token = tokenA) {
   return (await response.json()).application
 }
 
+async function createTypedDraft(token, applicationType) {
+  const response = await createApplication(token, {
+    ...validApplication,
+    applicationType,
+    title: `${applicationType} ${new mongoose.Types.ObjectId()}`,
+  })
+  assert.equal(response.status, 201)
+  return (await response.json()).application
+}
+
 test('authenticated applicant creates a MongoDB-backed draft using JWT identity', async () => {
+  const expectedType = `Residence certificate ${runId}`
   const response = await createApplication(tokenA, {
     ...validApplication,
+    applicationType: expectedType,
     applicantId: String(applicantB._id),
   })
   const { application } = await response.json()
@@ -162,7 +177,7 @@ test('authenticated applicant creates a MongoDB-backed draft using JWT identity'
   assert.ok(mongoose.isValidObjectId(application.id))
   assert.equal(application.applicantId, String(applicantA._id))
   assert.equal(application.status, 'DRAFT')
-  assert.equal(application.applicationType, validApplication.applicationType)
+  assert.equal(application.applicationType, expectedType)
   assert.ok(application.createdAt)
   assert.ok(application.updatedAt)
   assert.equal(application.submittedAt, null)
@@ -212,6 +227,117 @@ test('applicant can submit their own draft and submission date and status persis
   const stored = await Application.findById(application.id).lean()
   assert.equal(stored.status, 'OFFICER_REVIEW')
   assert.ok(stored.submittedAt)
+})
+
+test('applicant cannot submit a second active application of the same document type', async () => {
+  const first = await createTypedDraft(tokenA, `Income Certificate ${runId}-duplicate`)
+  const second = await createTypedDraft(tokenA, ` income   certificate ${runId}-duplicate `)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+
+  const duplicate = await requestApplication(`/${second.id}/submit`, tokenA, 'POST')
+  assert.equal(duplicate.status, 409)
+  assert.match((await duplicate.json()).error, /You already have an active income certificate .* application/i)
+  assert.equal((await Application.findById(second.id).lean()).status, 'DRAFT')
+})
+
+test('applicant can submit a document type again after the previous application is rejected', async () => {
+  const documentType = `Income Certificate ${runId}-rejected`
+  const rejected = await createTypedDraft(tokenA, documentType)
+  await Application.updateOne({ _id: rejected.id }, { $set: { status: 'REJECTED' } })
+  const retry = await createTypedDraft(tokenA, documentType)
+
+  const response = await requestApplication(`/${retry.id}/submit`, tokenA, 'POST')
+  assert.equal(response.status, 200)
+  assert.notEqual((await response.json()).application.status, 'DRAFT')
+})
+
+test('applicant can submit a document type again after an APPROVED application', async () => {
+  const documentType = `Residence Certificate ${runId}-approved`
+  const approved = await createTypedDraft(tokenA, documentType)
+  await Application.updateOne({ _id: approved.id }, { $set: { status: 'APPROVED' } })
+  const retry = await createTypedDraft(tokenA, documentType)
+
+  const response = await requestApplication(`/${retry.id}/submit`, tokenA, 'POST')
+  assert.equal(response.status, 200)
+  assert.notEqual((await response.json()).application.status, 'DRAFT')
+})
+
+test('same file cannot be uploaded to another active applicant application by renaming it', async () => {
+  const documentType = `Income Certificate ${runId}-same-file`
+  const first = await createTypedDraft(tokenA, documentType)
+  const second = await createTypedDraft(tokenA, documentType)
+  const identicalFile = makeTextImage('Same original certificate')
+  const firstUpload = await uploadDocument(first.id, tokenA, {
+    filename: 'income-certificate-original.png',
+    buffer: identicalFile,
+  })
+  assert.equal(firstUpload.status, 201)
+  const { document } = await firstUpload.json()
+  const storedDocument = await Document.findById(document.id).select('+contentHash').lean()
+  assert.match(storedDocument.contentHash, /^[a-f0-9]{64}$/)
+  assert.equal('contentHash' in document, false)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+
+  const renamedUpload = await uploadDocument(second.id, tokenA, {
+    filename: 'renamed-income-proof.png',
+    buffer: identicalFile,
+  })
+  assert.equal(renamedUpload.status, 409)
+  assert.match((await renamedUpload.json()).error, /file is already included in your active/i)
+  assert.equal(await Document.countDocuments({ applicationId: second.id }), 0)
+})
+
+test('same file cannot bypass duplicate validation when both uploads predate the first submission', async () => {
+  const file = makeTextImage('Same file in competing drafts')
+  const first = await createTypedDraft(tokenA, `Income Certificate ${runId}-race-one`)
+  const second = await createTypedDraft(tokenA, `Different label ${runId}-race-two`)
+  assert.equal((await uploadDocument(first.id, tokenA, { filename: 'first-name.png', buffer: file })).status, 201)
+  assert.equal((await uploadDocument(second.id, tokenA, { filename: 'second-name.png', buffer: file })).status, 201)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+
+  const secondSubmit = await requestApplication(`/${second.id}/submit`, tokenA, 'POST')
+  assert.equal(secondSubmit.status, 409)
+  assert.match((await secondSubmit.json()).error, /file is already included in your active/i)
+  assert.equal((await Application.findById(second.id).lean()).status, 'DRAFT')
+})
+
+test('applicant can reuse the same file after the previous application becomes terminal', async () => {
+  const file = makeTextImage('Reused after rejection')
+  const rejected = await createTypedDraft(tokenA, `Income Certificate ${runId}-same-terminal-file`)
+  assert.equal((await uploadDocument(rejected.id, tokenA, { filename: 'rejected.png', buffer: file })).status, 201)
+  await Application.updateOne({ _id: rejected.id }, { $set: { status: 'REJECTED' } })
+  const retry = await createTypedDraft(tokenA, `Income Certificate ${runId}-same-terminal-file`)
+
+  const retryUpload = await uploadDocument(retry.id, tokenA, { filename: 'retry.png', buffer: file })
+  assert.equal(retryUpload.status, 201)
+})
+
+test('different applicants may upload the same file while each has an active application', async () => {
+  const first = await createTypedDraft(tokenA, `Income Certificate ${runId}-owner-a`)
+  const second = await createTypedDraft(tokenB, `Income Certificate ${runId}-owner-b`)
+  const file = makeTextImage('Shared synthetic certificate')
+  assert.equal((await uploadDocument(first.id, tokenA, { filename: 'same-a.png', buffer: file })).status, 201)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+  assert.equal((await uploadDocument(second.id, tokenB, { filename: 'same-b.png', buffer: file })).status, 201)
+})
+
+test('applicant can submit a different document type while another type is active', async () => {
+  const first = await createTypedDraft(tokenA, `Income Certificate ${runId}-different`)
+  const differentType = await createTypedDraft(tokenA, `Residence Certificate ${runId}-different`)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+
+  const response = await requestApplication(`/${differentType.id}/submit`, tokenA, 'POST')
+  assert.equal(response.status, 200)
+})
+
+test('different applicants can submit applications of the same document type', async () => {
+  const documentType = `Income Certificate ${runId}-applicants`
+  const first = await createTypedDraft(tokenA, documentType)
+  const second = await createTypedDraft(tokenB, documentType)
+  assert.equal((await requestApplication(`/${first.id}/submit`, tokenA, 'POST')).status, 200)
+
+  const response = await requestApplication(`/${second.id}/submit`, tokenB, 'POST')
+  assert.equal(response.status, 200)
 })
 
 test('applicant cannot submit another applicant application', async () => {

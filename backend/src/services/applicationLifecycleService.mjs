@@ -5,11 +5,12 @@ import { createAuditEvent } from './auditService.mjs'
 const allowedTransitions = new Map([
   ['DRAFT', new Set(['SUBMITTED'])],
   ['SUBMITTED', new Set(['PROCESSING'])],
-  ['PROCESSING', new Set(['OFFICER_REVIEW', 'HUMAN_VERIFICATION'])],
-  ['HUMAN_VERIFICATION', new Set(['ASSIGNED', 'WAITING_FOR_OFFICER', 'REJECTED'])],
-  ['OFFICER_REVIEW', new Set(['ROUTED', 'WAITING_FOR_OFFICER', 'ASSIGNED', 'UNDER_REVIEW'])],
-  ['ROUTED', new Set(['WAITING_FOR_OFFICER', 'ASSIGNED'])],
-  ['WAITING_FOR_OFFICER', new Set(['ASSIGNED'])],
+  ['PROCESSING', new Set(['OFFICER_REVIEW', 'HUMAN_VERIFICATION', 'ASSIGNED', 'WAITING_FOR_OFFICER', 'WAITING_FOR_OFFICER_ASSIGNMENT'])],
+  ['HUMAN_VERIFICATION', new Set(['ASSIGNED', 'WAITING_FOR_OFFICER', 'WAITING_FOR_OFFICER_ASSIGNMENT', 'REJECTED'])],
+  ['OFFICER_REVIEW', new Set(['ROUTED', 'WAITING_FOR_OFFICER', 'WAITING_FOR_OFFICER_ASSIGNMENT', 'ASSIGNED', 'UNDER_REVIEW'])],
+  ['ROUTED', new Set(['WAITING_FOR_OFFICER', 'WAITING_FOR_OFFICER_ASSIGNMENT', 'ASSIGNED'])],
+  ['WAITING_FOR_OFFICER', new Set(['ASSIGNED', 'WAITING_FOR_OFFICER_ASSIGNMENT'])],
+  ['WAITING_FOR_OFFICER_ASSIGNMENT', new Set(['ASSIGNED'])],
   ['ASSIGNED', new Set(['UNDER_REVIEW'])],
   ['UNDER_REVIEW', new Set(['APPROVED', 'REJECTED', 'ESCALATED'])],
   ['ESCALATED', new Set(['APPROVED', 'REJECTED'])],
@@ -47,18 +48,6 @@ export async function recordApplicationProcessingTransition(applicationId, actor
     error.statusCode = 409
     throw error
   }
-  await Document.updateMany(
-    {
-      applicationId,
-      ocrStatus: { $in: ['FAILED', 'LOW_CONFIDENCE'] },
-    },
-    {
-      $set: {
-        humanVerificationRequired: true,
-        humanVerificationStatus: 'PENDING',
-      },
-    },
-  )
   await recordApplicationStatusTransition({
     applicationId,
     previousStatus: 'SUBMITTED',
@@ -69,7 +58,12 @@ export async function recordApplicationProcessingTransition(applicationId, actor
   return transitioned
 }
 
-export async function routeApplicationToHumanVerification(applicationId, actor, reason) {
+export async function routeApplicationToHumanVerification(
+  applicationId,
+  actor,
+  reason,
+  verificationReasons = [],
+) {
   const safeReason = typeof reason === 'string' ? reason.trim().slice(0, 2000) : ''
   if (!safeReason) {
     const error = new Error('A human verification reason is required.')
@@ -84,6 +78,9 @@ export async function routeApplicationToHumanVerification(applicationId, actor, 
         humanVerificationRequired: true,
         humanVerificationStatus: 'PENDING',
         humanVerificationReason: safeReason,
+        verificationReasons,
+        processingDecision: 'HUMAN_VERIFICATION',
+        processingDecisionAt: new Date(),
       },
     },
     { new: true, runValidators: true },
@@ -92,6 +89,18 @@ export async function routeApplicationToHumanVerification(applicationId, actor, 
     const error = new Error('The application is no longer available for Human Verification.')
     error.statusCode = 409
     throw error
+  }
+  const documentIds = verificationReasons.map(({ documentId }) => documentId)
+  if (documentIds.length) {
+    await Document.updateMany(
+      { _id: { $in: documentIds }, applicationId },
+      {
+        $set: {
+          humanVerificationRequired: true,
+          humanVerificationStatus: 'PENDING',
+        },
+      },
+    )
   }
   await recordApplicationStatusTransition({
     applicationId,

@@ -34,7 +34,7 @@ export async function ensureDevelopmentAdmin({
   validateConfiguration({ email, password, nodeEnv })
   const normalizedEmail = normalizeEmail(email)
 
-  const adminUsers = await UserModel.find({ role: 'ADMIN' }).select('_id email displayName').lean()
+  const adminUsers = await UserModel.find({ role: 'ADMIN' }).select('_id email displayName passwordHash').lean()
   const matchingAdmin = adminUsers.find((admin) => normalizeEmail(admin.email) === normalizedEmail) || adminUsers[0] || null
   const duplicateAdminIds = (matchingAdmin
     ? adminUsers
@@ -49,13 +49,11 @@ export async function ensureDevelopmentAdmin({
       throw new Error('ADMIN_EMAIL is already used by another account; refusing to change its role.')
     }
 
-    const passwordHash = await bcrypt.hash(password, 10)
     const result = await UserModel.updateOne(
       { _id: matchingAdmin._id, role: 'ADMIN' },
       {
         $set: {
           email: normalizedEmail,
-          passwordHash,
           role: 'ADMIN',
           displayName: matchingAdmin.displayName || 'Development Admin',
           permissions: [...adminPermissions],
@@ -107,5 +105,41 @@ export async function ensureDevelopmentAdmin({
     duplicateAdminsRemoved: 0,
     finalAdminCount: finalAdmins.length,
     createdAdminId: createdUser?._id || null,
+  }
+}
+
+export async function resetDevelopmentAdminPassword({
+  email,
+  password,
+  nodeEnv = env.NODE_ENV,
+  UserModel = User,
+}) {
+  validateConfiguration({ email, password, nodeEnv })
+  const normalizedEmail = normalizeEmail(email)
+  const adminUsers = await UserModel.find({ role: 'ADMIN' })
+    .select('_id email')
+    .lean()
+  const matches = adminUsers.filter((admin) => normalizeEmail(admin.email) === normalizedEmail)
+
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length === 0
+        ? 'The configured ADMIN_EMAIL does not match an existing Admin account; no password was changed.'
+        : 'The configured ADMIN_EMAIL matches multiple Admin accounts; no password was changed.',
+    )
+  }
+
+  const result = await UserModel.updateOne(
+    { _id: matches[0]._id, role: 'ADMIN', email: normalizedEmail },
+    { $set: { passwordHash: await bcrypt.hash(password, 10) } },
+  )
+  if (result.matchedCount !== 1) {
+    throw new Error('The intended Admin account changed during reset; no password was changed.')
+  }
+
+  return {
+    reset: true,
+    adminId: String(matches[0]._id),
+    adminEmail: normalizedEmail,
   }
 }

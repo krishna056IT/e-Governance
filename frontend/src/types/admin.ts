@@ -5,6 +5,19 @@ export interface AdminOverview {
   departmentCount: number
   userCount: number
   activeAdminCount: number
+  automationMetrics: {
+    decisionedApplicationCount: number
+    autoProcessedCount: number
+    humanVerificationCount: number
+    automationRate: number | null
+    requiredFieldCount: number
+    completeFieldCount: number
+    evidenceSupportedFieldCount: number
+    confidenceQualifiedFieldCount: number
+    fieldCompletenessRate: number | null
+    evidenceSupportRate: number | null
+    fieldConfidenceQualificationRate: number | null
+  }
 }
 
 export type StaffRole = 'OFFICER' | 'GENERAL_OFFICER' | 'HUMAN_VERIFIER'

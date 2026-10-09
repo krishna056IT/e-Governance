@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
 import Application from '../models/Application.mjs'
+import Department from '../models/Department.mjs'
 import Document from '../models/Document.mjs'
 import User from '../models/User.mjs'
 import { recordApplicationStatusTransition } from './applicationLifecycleService.mjs'
@@ -102,9 +103,19 @@ function serializeReviewNote(note, officerNames) {
 }
 
 export async function serializeOfficerApplication(application, documents = []) {
-  const applicant = await User.findById(application.applicantId)
-    .select('_id displayName email')
-    .lean()
+  const [applicant, department, assignedOfficer] = await Promise.all([
+    User.findById(application.applicantId)
+      .select('_id displayName email')
+      .lean(),
+    Department.findById(application.departmentId)
+      .select('_id name')
+      .lean(),
+    application.assignedOfficerId
+      ? User.findById(application.assignedOfficerId)
+        .select('_id displayName governmentOfficerId')
+        .lean()
+      : null,
+  ])
   const notes = application.officerReview?.notes || []
   const officerIds = [...new Set(notes.map((note) => String(note.officerId)))]
   const officers = officerIds.length
@@ -127,8 +138,10 @@ export async function serializeOfficerApplication(application, documents = []) {
     contactEmail: application.applicationData.contactEmail,
     details: application.applicationData.details,
     status: application.status,
-    department: null,
+    department: department?.name || null,
     departmentId: String(application.departmentId),
+    assignedOfficerId: assignedOfficer ? String(assignedOfficer._id) : null,
+    assignedOfficerName: assignedOfficer?.displayName || assignedOfficer?.governmentOfficerId || null,
     createdAt: application.createdAt,
     updatedAt: application.updatedAt,
     submittedAt: application.submittedAt,
@@ -184,6 +197,7 @@ async function findOfficerApplication(officer, applicationId) {
   return Application.findOne({
     _id: applicationId,
     departmentId,
+    assignedOfficerId: officer.id,
     status: { $in: reviewStatuses },
   })
 }
@@ -192,6 +206,7 @@ export async function listOfficerApplications(officer) {
   const departmentId = getDepartmentScope(officer)
   const applications = await Application.find({
     departmentId,
+    assignedOfficerId: officer.id,
     status: { $in: reviewStatuses },
   }).sort({ updatedAt: -1, _id: -1 }).lean()
   const blockedDocumentApplications = await Document.distinct('applicationId', {
@@ -221,13 +236,19 @@ export async function startOfficerReview(officer, applicationId) {
   const existing = await Application.findOne({
     _id: applicationId,
     departmentId,
+    assignedOfficerId: officer.id,
     status: { $in: ['OFFICER_REVIEW', 'ASSIGNED'] },
   }).select('_id status').lean()
   if (!existing) return null
   await getDocumentsForApplication(applicationId)
   const now = new Date()
   const updated = await Application.findOneAndUpdate(
-    { _id: applicationId, departmentId, status: existing.status },
+    {
+      _id: applicationId,
+      departmentId,
+      assignedOfficerId: officer.id,
+      status: existing.status,
+    },
     {
       $set: {
         status: 'UNDER_REVIEW',
@@ -278,6 +299,7 @@ export async function decideOfficerReview({
   const application = await Application.findOne({
     _id: applicationId,
     departmentId,
+    assignedOfficerId: officer.id,
     status: 'UNDER_REVIEW',
   })
   if (!application) return null
@@ -289,6 +311,7 @@ export async function decideOfficerReview({
     {
       _id: application._id,
       departmentId,
+      assignedOfficerId: officer.id,
       status: 'UNDER_REVIEW',
     },
     {

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { DashboardLayout } from '../components/layout'
-import { EmptyState, ErrorState, InfoCard, LoadingState, PageHeader } from '../components/ui'
+import { EmptyState, ErrorState, InfoCard, LoadingState, OcrTextDisplay, PageHeader } from '../components/ui'
 import { humanVerificationService } from '../services/humanVerificationService'
 import type {
   HumanVerificationApplication,
   HumanVerificationApplicationDocument,
+  VerificationReason,
 } from '../types'
 
 const verificationStatuses = [
@@ -17,6 +18,40 @@ const verificationStatuses = [
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : '—'
+}
+
+function VerificationReasons({ reasons }: { reasons: VerificationReason[] }) {
+  if (!reasons.length) return null
+  return (
+    <section aria-label="Human Verification required" className="verification-reasons">
+      <h3>HUMAN VERIFICATION REQUIRED</h3>
+      <h4>Why was this application sent for verification?</h4>
+      <ol>
+        {reasons.map((reason) => (
+          <li key={`${reason.documentId}-${reason.code}`}>
+            <strong>Document:</strong> {reason.documentName}
+            <p><strong>Problem:</strong> {reason.message}</p>
+            {reason.predictedDocumentType && <p><strong>Detected document type:</strong> {reason.predictedDocumentType}</p>}
+            {reason.predictedDepartment && <p><strong>Predicted department:</strong> {reason.predictedDepartment}</p>}
+            {reason.fieldNames?.length
+              ? <p><strong>Fields requiring review:</strong> {reason.fieldNames.join(', ')}</p>
+              : null}
+            {reason.classificationConfidence !== null && reason.classificationConfidence !== undefined &&
+              <p><strong>Classification confidence:</strong> {Math.round(reason.classificationConfidence * 100)}%</p>}
+            {reason.qualityScore !== null && reason.qualityScore !== undefined &&
+              <p><strong>Document quality score:</strong> {Math.round(reason.qualityScore * 100)}%</p>}
+            {reason.fieldCompleteness !== null && reason.fieldCompleteness !== undefined &&
+              <p><strong>Verified field completeness:</strong> {Math.round(reason.fieldCompleteness * 100)}%</p>}
+            {reason.ocrNoiseScore !== null && reason.ocrNoiseScore !== undefined &&
+              <p><strong>AI-estimated OCR noise:</strong> {Math.round(reason.ocrNoiseScore * 100)}%</p>}
+            {reason.failureCode && <p><strong>Failure Code:</strong> {reason.failureCode}</p>}
+            {reason.failureDescription && <p><strong>Failure Details:</strong> {reason.failureDescription}</p>}
+            <p><strong>Action:</strong> {reason.action}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
 }
 
 export function HumanVerificationDashboardPage() {
@@ -114,12 +149,8 @@ export function HumanVerificationDashboardPage() {
                   <p className="eyebrow">{application.applicationId} · {application.applicationType}</p>
                   <h3>{application.applicantName} · {application.title}</h3>
                   <p className="muted">
-                    {application.documentCount} document(s) · {application.reason || 'Manual Human Verification required'} · Submitted {formatDate(application.submittedAt)}
+                    {application.documentCount} document(s) · {application.verificationReasons?.map(({ documentName, message }) => `${documentName}: ${message}`).join(' ') || application.reason || 'Reason details were not recorded for this application.'} · Submitted {formatDate(application.submittedAt)}
                   </p>
-                </div>
-                <div className="verification-list__score">
-                  <strong>{application.ocrScore === null ? '—' : `${application.ocrScore}%`}</strong>
-                  <span>LOWEST OCR SCORE</span>
                 </div>
                 {['PENDING', 'IN_REVIEW'].includes(application.humanVerificationStatus) ? (
                   <button
@@ -177,13 +208,18 @@ function OriginalDocument({ document }: { document: HumanVerificationApplication
   return (
     <InfoCard title={`${document.documentType} · ${document.filename}`}>
       <dl className="summary-grid">
-        <div><dt>OCR status</dt><dd>{document.ocrStatus}</dd></div>
-        <div><dt>OCR score / threshold</dt><dd>{document.ocrScore ?? '—'} / {document.ocrThreshold ?? '—'}</dd></div>
+        <div><dt>Document review</dt><dd>{document.ocrStatus === 'LOW_CONFIDENCE' ? 'Verification pending' : document.ocrStatus}</dd></div>
         <div><dt>Uploaded</dt><dd>{formatDate(document.submittedAt)}</dd></div>
       </dl>
       {document.humanVerificationReason && <p>{document.humanVerificationReason}</p>}
       <h3>OCR-extracted information</h3>
-      <pre className="verification-extracted-text">{document.extractedText || 'No text was extracted from this document.'}</pre>
+      <OcrTextDisplay text={document.extractedText} />
+      {document.extractedText && (
+        <details className="ocr-raw-details">
+          <summary>Show raw OCR text</summary>
+          <pre className="verification-extracted-text">{document.extractedText}</pre>
+        </details>
+      )}
       <button
         className="button button--secondary"
         type="button"
@@ -306,8 +342,11 @@ export function HumanVerificationDetailsPage() {
               </dl>
               <h3>Application details</h3>
               <p>{application.applicationData?.details || '—'}</p>
-              <h3>Reason for Human Verification</h3>
-              <p>{application.humanVerificationReason || application.reason || 'Manual review required.'}</p>
+              <VerificationReasons reasons={application.verificationReasons || []} />
+              {!(application.verificationReasons?.length) && <>
+                <h3>Reason for Human Verification</h3>
+                <p>{application.humanVerificationReason || application.reason || 'Reason details were not recorded when this application entered Human Verification.'}</p>
+              </>}
               {application.humanVerificationRejectionReason && <p><strong>Rejection reason:</strong> {application.humanVerificationRejectionReason}</p>}
             </InfoCard>
             {application.documents.map((document) => <OriginalDocument document={document} key={document.id} />)}

@@ -62,33 +62,35 @@ Email + password → account registration → email + password login
 Passwords are securely hashed and never stored in plaintext. No
 additional email-verification step is specified.
 
-### Officer
+### Officer and General Officer
 
 ```text
-Government Officer ID + registered name/email
+Government Officer ID + registered name/email + requested staff role
   → validate active Government Officer Registry identity
-  → create/reuse User with registry Department and PENDING status
+  → create/reuse role-specific User with registry email/Department and PENDING status
   → Admin reviews and approves or rejects
-  → Officer enters Government Officer ID on Officer Access to check status
-  → approval makes password setup available to that Officer
-  → Officer completes the existing 24-hour, single-use password setup
-  → Officer sets a bcrypt-hashed password and logs in by ID or email
+  → staff member enters Government Officer ID on the matching Access page to check status
+  → approval sends a 24-hour, single-use password setup link to the registered email
+  → staff member chooses a bcrypt-hashed password
+  → department Officer logs in by ID or email; General Officer logs in by ID only
 ```
 
 `GovernmentOfficerRegistry` stores synthetic development identities and
 their Department/email mapping separately from User accounts. Registry
-seeding never creates accounts. The User record is authoritative for the
+seeding never creates accounts. General Officer and department Officer
+registrations both derive name, official email, and Department from this
+registry; the role is selected by the registration flow. The User record is authoritative for the
 account state (`PENDING`, `ACTIVE`, `REJECTED`, or `SUSPENDED`), the
 existing `isActive` check remains in force, and pending/rejected/
 suspended accounts cannot authenticate. Registry Department association
 is not caller-selectable.
 
 The existing JWT, bcrypt, User, Admin permission, and audit mechanisms
-are reused. Officer setup token expiry and one-use consumption are
+are reused. Staff setup token expiry and one-use consumption are
 enforced by the backend. Password setup does not issue a session.
 Successful setup requires password confirmation, clears
-`mustChangePassword`, and permits normal Officer login and dashboard
-access. Applicant/Admin authentication flows are unchanged.
+`mustChangePassword`, and permits login to the requested staff workspace.
+Applicant/Admin authentication flows are unchanged.
 
 No production email provider is configured. An injectable email sender
 is the delivery boundary; production approval returns a safe success
@@ -103,8 +105,8 @@ invalidates the registration credential.
 
 In development, a mock transport may capture the recipient, subject,
 safe metadata, and setup path in memory for testing. The Admin approval
-flow exposes no setup link or preview API; the Officer checks approval
-on Officer Access and uses the existing password setup form. Without a
+flow exposes no setup link or preview API; staff check approval on their
+role-specific Access page and use the existing password setup form. Without a
 configured production sender, approval fails explicitly rather than
 activating an account without a deliverable setup credential. No
 password is returned or logged.
@@ -113,7 +115,7 @@ Only an Admin with the existing `USER_MANAGE` permission can list,
 inspect, approve, or reject registrations. Rejection requires a reason
 and is audited. Approval is conditional on a current pending state and
 an active registry identity/Department. Existing Admin staff creation
-cannot create or promote Officer accounts outside this flow.
+cannot create General Officer or department Officer accounts outside this flow.
 
 ### Admin
 
@@ -164,19 +166,34 @@ read/download. Frontend route guards are for user experience only.
 2. Local Tesseract OCR processes images; PDF.js renders PDFs for OCR.
    OCR confidence and status are persisted separately from the original
    document and extracted text.
-3. The unchanged backend confidence gate uses configurable
-   `OCR_THRESHOLD` (default 90%). Scores below it are persisted as
-   requiring human verification with a pending state; scores equal to
-   or above it are marked completed.
-4. Below-threshold documents cannot enter document understanding,
-   Department classification, routing, or assignment until an
-   authorized General Officer/Human Verification officer verifies them.
-   Verification rejection is delegated to the existing rejection/
-   escalation workflow; the gate does not define an application-state
-   transition.
-5. A verified low-confidence document continues through broader
-   document understanding before backend classification and routing.
-6. Processing errors leave the original and metadata intact and record
+3. The backend confidence gate uses configurable `OCR_THRESHOLD`
+   (default 90%). Scores equal to or above it are marked completed;
+   below-threshold scores remain `LOW_CONFIDENCE`, without changing the
+   configured gate.
+4. After usable OCR, a configurable AI quality assessment evaluates
+   readability, noise, and document-specific field candidates. Expected
+   field profiles are extensible (currently Health and Income
+   Certificates); extracted values are checked against exact OCR quotes,
+   with deterministic OCR text metrics persisted separately from source
+   text. Quality-model field completeness is recorded but not trusted for
+   the decision; verified completeness is calculated from evidence. Every
+   below-threshold document with successful OCR and usable text runs this
+   assessment once before the existing fallback checks; it assesses OCR
+   evidence and does not generate replacement OCR text.
+5. Scores below the configurable hard minimum (default 50%) always enter
+   Human Verification. Scores from the hard minimum to the moderate floor
+   (default 60%) require stronger quality, evidence, completeness, and
+   noise limits. Scores from the moderate floor to `OCR_THRESHOLD`
+   (default 75% in the demo configuration) require at least 0.85 quality,
+   0.80 verified field completeness, readability, safe-for-automation,
+   consistency, and acceptable noise. Scores meeting the normal OCR
+   threshold use the quality/readability/noise gate before classification.
+6. Failed OCR is never eligible for quality-based automation. Any
+   malformed/unavailable assessment, unsafe or inconsistent result,
+   insufficient fields, or unsupported low-confidence document enters
+   Human Verification. Only documents passing this layer continue through
+   the existing classifier, department resolution, and assignment.
+7. Processing errors leave the original and metadata intact and record
    an OCR failure state. Retry orchestration is not yet implemented.
 
 Applicant document metadata is scoped to the owning application.
@@ -232,22 +249,46 @@ After a Department is selected, the assignment service:
 2. counts each eligible Officer's assigned applications in
    `ASSIGNED` or `UNDER_REVIEW`;
 3. chooses the Officer with the lowest count;
-4. breaks equal-count ties by oldest `lastAssignedAt` first (never
-   assigned sorts first), then government Officer ID in ascending
-   stable order;
-5. atomically creates the assignment and updates assignment fairness
-   metadata.
+4. breaks equal-count ties by the oldest most-recent assignment
+   timestamp across that Officer's application history (never assigned
+   sorts first), then stable User ID ascending;
+5. selects and persists the assignment while holding an atomic,
+   department-scoped database lease lock. The lock serializes workload
+   reads and assignment writes for concurrent submissions; an expired
+   lease can be recovered after a process exits unexpectedly.
 
 If no eligible Officer is available, the application enters
-`WAITING_FOR_OFFICER`. It must not be silently assigned to another
-Department.
+`WAITING_FOR_OFFICER_ASSIGNMENT` with no assigned Officer. The legacy
+`WAITING_FOR_OFFICER` state is retained for existing records. It must not
+be silently assigned to another Department.
 
-Selection and assignment must be concurrency-safe: use a transaction
-with appropriate row/advisory locks or equivalent serialization, and
-enforce at most one active assignment per application. The pending count
-and assignment must be evaluated/committed atomically so concurrent
-submissions cannot over-assign based on stale counts. Retries must not
-create duplicate active assignments.
+Selection and assignment are serialized per Department using a lease
+stored on its existing database record. The application is rechecked
+while holding the lock, and the lock is released after the status,
+Officer, Department, timestamp, and audit event are persisted. A crashed
+process cannot hold the lock permanently because its lease expires.
+Concurrent submissions therefore see earlier assignments in their
+workload counts; retries cannot assign an application that has already
+left its eligible pre-assignment state.
+
+An Admin can retry an unassigned application through
+`POST /api/admin/applications/:applicationId/retry-assignment`. The retry
+accepts both the current `WAITING_FOR_OFFICER_ASSIGNMENT` and legacy
+`WAITING_FOR_OFFICER` status, uses the application's persisted Department,
+normalizes legacy waiting records to `WAITING_FOR_OFFICER_ASSIGNMENT`,
+and otherwise writes the Officer and assignment timestamp through the
+same serialized selection path. If no eligible Officer exists, the
+application remains unassigned in `WAITING_FOR_OFFICER_ASSIGNMENT`.
+
+An Admin with `USER_MANAGE` may reissue the one-time initial password
+setup link for an already-approved, active Officer whose
+`mustChangePassword` flag is still true through
+`POST /api/admin/officer-registrations/:userId/reissue-setup`. The
+Officer still chooses and submits their own password through the existing
+setup flow. In development only, the authenticated Admin response
+includes the one-time relative setup path so it can be delivered
+privately when no email sender is configured; production sends the link
+through the configured email sender and does not return the credential.
 
 For this purpose, pending workload includes exactly:
 
@@ -359,8 +400,10 @@ application process.
 
 ### Officer
 
-`userId`, unique `governmentOfficerId`, required `departmentId`,
-assignment eligibility/availability data, `lastAssignedAt`.
+`userId`, unique `governmentOfficerId`, required `departmentId`, and
+assignment eligibility/availability data. Assignment history is derived
+from application `assignedAt` timestamps; there is no separate
+`lastAssignedAt` User field.
 
 ### Department
 

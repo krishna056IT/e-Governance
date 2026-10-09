@@ -10,11 +10,13 @@ import { signToken } from '../src/middleware/auth.mjs'
 import AuditEvent from '../src/models/AuditEvent.mjs'
 import Application from '../src/models/Application.mjs'
 import Department from '../src/models/Department.mjs'
+import GovernmentOfficerRegistry from '../src/models/GovernmentOfficerRegistry.mjs'
 import User from '../src/models/User.mjs'
 
 const runId = `${process.pid}-${Date.now()}`
 const createdEmails = []
 const createdDepartmentCodes = []
+const createdGovernmentOfficerIds = []
 let server
 let baseUrl
 let adminUser
@@ -65,13 +67,18 @@ after(async () => {
   if (createdEmails.length > 0) {
     await User.deleteMany({ email: { $in: createdEmails } })
   }
+  if (createdGovernmentOfficerIds.length > 0) {
+    await GovernmentOfficerRegistry.deleteMany({
+      governmentOfficerId: { $in: createdGovernmentOfficerIds },
+    })
+  }
   if (createdDepartmentCodes.length > 0) {
     await Application.deleteMany({ departmentId: { $in: await Department.find({ code: { $in: createdDepartmentCodes } }).distinct('_id') } })
     await Department.deleteMany({ code: { $in: createdDepartmentCodes } })
   }
   await mongoose.connection.collection('auditevents').deleteMany({
     actorId: adminUser._id,
-    action: { $in: ['USER_CREATED', 'USER_UPDATED', 'USER_ROLE_UPDATED', 'USER_ACTIVATED', 'USER_DEACTIVATED', 'DEPARTMENT_CREATED', 'DEPARTMENT_UPDATED', 'DEPARTMENT_ACTIVATED', 'DEPARTMENT_DEACTIVATED'] },
+    action: { $in: ['USER_CREATED', 'USER_UPDATED', 'USER_ROLE_UPDATED', 'USER_ACTIVATED', 'USER_DEACTIVATED', 'DEPARTMENT_CREATED', 'DEPARTMENT_UPDATED', 'DEPARTMENT_ACTIVATED', 'DEPARTMENT_DEACTIVATED', 'OFFICER_ASSIGNMENT_RETRIED', 'OFFICER_PASSWORD_SETUP_REISSUED'] },
   })
   if (server) {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
@@ -149,6 +156,116 @@ test('admin routes require authenticated ADMIN access', async () => {
     headers: { Authorization: `Bearer ${officerToken}` },
   })
   assert.equal(officerDepartmentsDenied.status, 403)
+})
+
+test('Admin can retry assignment for a waiting application using its resolved department', async () => {
+  const applicant = await createApplicantUser(`retry-applicant-${runId}@example.test`)
+  const retryDepartmentCode = `RETRY${runId.replace(/[^0-9]/g, '').slice(-4)}`
+  createdDepartmentCodes.push(retryDepartmentCode)
+  const retryDepartment = await Department.create({
+    name: `Retry Assignment Department ${runId}`,
+    code: retryDepartmentCode,
+    isActive: true,
+  })
+  const officerEmail = `retry-officer-${runId}@example.test`
+  createdEmails.push(officerEmail)
+  const officer = await User.create({
+    email: officerEmail,
+    displayName: 'Retry Assignment Officer',
+    passwordHash: await bcrypt.hash('OfficerPassword123!', 10),
+    role: 'OFFICER',
+    departmentId: String(retryDepartment._id),
+    permissions: ['APPLICATION_VIEW_ASSIGNED'],
+    accountStatus: 'ACTIVE',
+    isActive: true,
+    mustChangePassword: false,
+  })
+  const application = await Application.create({
+    applicantId: applicant._id,
+    applicationType: 'Waiting assignment retry',
+    applicationData: {
+      title: 'Waiting for an eligible Officer',
+      applicantName: applicant.displayName,
+      contactEmail: applicant.email,
+      details: 'The previously resolved Department must be preserved.',
+    },
+    status: 'WAITING_FOR_OFFICER_ASSIGNMENT',
+    departmentId: retryDepartment._id,
+    assignedOfficerId: null,
+    assignedAt: null,
+  })
+
+  const response = await fetch(
+    `${baseUrl}/api/admin/applications/${application._id}/retry-assignment`,
+    { method: 'POST', headers: adminHeaders() },
+  )
+  const body = await response.json()
+  assert.equal(response.status, 200)
+  assert.equal(body.status, 'ASSIGNED')
+  assert.equal(body.department.id, String(retryDepartment._id))
+  assert.equal(body.assignedOfficerId, String(officer._id))
+  const stored = await Application.findById(application._id).lean()
+  assert.equal(String(stored.departmentId), String(retryDepartment._id))
+  assert.equal(String(stored.assignedOfficerId), String(officer._id))
+  assert.ok(stored.assignedAt instanceof Date)
+})
+
+test('Admin can reissue setup for an approved Officer and Officer completes normal password setup', async () => {
+  const officerEmail = `reissue-officer-${runId}@example.test`
+  const governmentOfficerId = `ADM-${runId.replace(/[^0-9]/g, '').slice(-3).padStart(3, '0')}`
+  createdEmails.push(officerEmail)
+  createdGovernmentOfficerIds.push(governmentOfficerId)
+  await GovernmentOfficerRegistry.create({
+    governmentOfficerId,
+    displayName: 'Setup Recovery Officer',
+    departmentId: String(department._id),
+    officialEmail: officerEmail,
+    isActive: true,
+  })
+  const officer = await User.create({
+    email: officerEmail,
+    displayName: 'Setup Recovery Officer',
+    role: 'OFFICER',
+    departmentId: String(department._id),
+    governmentOfficerId,
+    permissions: ['APPLICATION_VIEW_ASSIGNED'],
+    accountStatus: 'ACTIVE',
+    isActive: true,
+    mustChangePassword: true,
+  })
+
+  const reissueResponse = await fetch(
+    `${baseUrl}/api/admin/officer-registrations/${officer._id}/reissue-setup`,
+    { method: 'POST', headers: adminHeaders() },
+  )
+  const reissued = await reissueResponse.json()
+  assert.equal(reissueResponse.status, 200)
+  assert.equal(typeof reissued.setupPath, 'string')
+  const setupToken = new URL(reissued.setupPath, baseUrl).searchParams.get('token')
+  assert.ok(setupToken)
+  const storedPending = await User.findById(officer._id)
+    .select('+setupTokenHash +setupTokenExpiresAt')
+    .lean()
+  assert.ok(storedPending.setupTokenHash)
+  assert.ok(storedPending.setupTokenExpiresAt > new Date())
+
+  const setupResponse = await fetch(`${baseUrl}/api/auth/officer-setup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      role: 'OFFICER',
+      setupToken,
+      temporaryPassword: 'OfficerSetupTestPassword!2026',
+    }),
+  })
+  const setupBody = await setupResponse.json()
+  assert.equal(setupResponse.status, 200)
+  assert.equal(setupBody.user.role, 'OFFICER')
+  assert.equal(setupBody.user.accountStatus, 'ACTIVE')
+  assert.equal(setupBody.user.isActive, true)
+  assert.equal(setupBody.user.mustChangePassword, false)
+  assert.equal(setupBody.user.departmentId, String(department._id))
+  assert.equal('setupTokenHash' in setupBody.user, false)
 })
 
 test('Admin can log in with a bcrypt-protected password and use the Admin API', async () => {
@@ -302,6 +419,13 @@ test('admin can create and list departments', async () => {
 
 test('department listing reports officer and pending application counts', async () => {
   const applicant = await createApplicantUser(`department-count-applicant-${runId}@example.test`)
+  const countDepartmentCode = `CNT${runId.replace(/[^0-9]/g, '').slice(-8)}`
+  createdDepartmentCodes.push(countDepartmentCode)
+  const countDepartment = await Department.create({
+    name: `Department Count ${runId}`,
+    code: countDepartmentCode,
+    isActive: true,
+  })
   const officerEmail = `department-count-officer-${runId}@example.test`
   createdEmails.push(officerEmail)
   await User.create({
@@ -309,7 +433,7 @@ test('department listing reports officer and pending application counts', async 
     displayName: 'Department Count Officer',
     passwordHash: await bcrypt.hash('OfficerPassword123!', 10),
     role: 'OFFICER',
-    departmentId: String(department._id),
+    departmentId: String(countDepartment._id),
     governmentOfficerId: `COUNT-${runId}`,
     isActive: true,
   })
@@ -322,14 +446,14 @@ test('department listing reports officer and pending application counts', async 
       contactEmail: applicant.email,
       details: 'Verify department workload totals.',
     },
-    departmentId: department._id,
+    departmentId: countDepartment._id,
     status,
   })))
 
   const response = await fetch(`${baseUrl}/api/admin/departments`, { headers: adminHeaders() })
   assert.equal(response.status, 200)
   const body = await response.json()
-  const listedDepartment = body.departments.find((entry) => entry.id === String(department._id))
+  const listedDepartment = body.departments.find((entry) => entry.id === String(countDepartment._id))
   assert.equal(listedDepartment.officerCount, 1)
   assert.equal(listedDepartment.pendingApplicationCount, 2)
   assert.equal(listedDepartment.isCodeEditable, false)
@@ -371,7 +495,7 @@ test('department management requires DEPARTMENT_MANAGE', async () => {
   await User.updateOne({ _id: noDepartmentPermission._id }, { $set: { isActive: false } })
 })
 
-test('admin can create staff users and the system records the actor identity', async () => {
+test('General Officer accounts cannot bypass registration approval through Admin provisioning', async () => {
   const email = `officer-${runId}@example.test`
   createdEmails.push(email)
 
@@ -388,37 +512,9 @@ test('admin can create staff users and the system records the actor identity', a
     }),
   })
 
-  assert.equal(response.status, 201)
-  const body = await response.json()
-  assert.equal(body.user.email, email)
-  assert.equal(body.user.role, 'GENERAL_OFFICER')
-  assert.equal('passwordHash' in body.user, false)
-  const storedUser = await User.findById(body.user.id).lean()
-  assert.ok(storedUser)
-  assert.equal(await bcrypt.compare('OfficerPassword123!', storedUser.passwordHash), true)
-
-  const listResponse = await fetch(`${baseUrl}/api/admin/users`, {
-    headers: adminHeaders(),
-  })
-  assert.equal(listResponse.status, 200)
-  const listBody = await listResponse.json()
-  const listedUser = listBody.users.find((user) => user.id === body.user.id)
-  assert.ok(listedUser)
-  assert.equal('passwordHash' in listedUser, false)
-
-  const getResponse = await fetch(`${baseUrl}/api/admin/users/${body.user.id}`, {
-    headers: adminHeaders(),
-  })
-  assert.equal(getResponse.status, 200)
-  const getBody = await getResponse.json()
-  assert.equal(getBody.user.id, body.user.id)
-  assert.equal('passwordHash' in getBody.user, false)
-
-  const audit = await AuditEvent.findOne({ action: 'USER_CREATED', actorId: adminUser._id }).lean()
-  assert.ok(audit)
-  assert.equal(String(audit.actorId), String(adminUser._id))
-  assert.equal(audit.actorRole, 'ADMIN')
-  await User.deleteOne({ _id: body.user.id })
+  assert.equal(response.status, 400)
+  assert.match((await response.json()).error, /must register with a Government Officer ID and receive Admin approval/i)
+  assert.equal(await User.exists({ email }), null)
 })
 
 test('staff creation rejects non-staff roles and invalid departments', async () => {
@@ -458,10 +554,10 @@ test('admin can update staff role, department, and officer ID with an audit reco
     email,
     displayName: 'Staff Update User',
     passwordHash: await bcrypt.hash('VerifierPassword123!', 10),
-    role: 'HUMAN_VERIFIER',
+    role: 'GENERAL_OFFICER',
     departmentId: String(department._id),
     governmentOfficerId: 'GOV-2001',
-    permissions: ['HUMAN_VERIFY_OCR'],
+    permissions: ['APPLICATION_VIEW_ASSIGNED', 'HUMAN_VERIFY_OCR'],
     isActive: true,
   })
 
@@ -477,7 +573,6 @@ test('admin can update staff role, department, and officer ID with an audit reco
     method: 'PATCH',
     headers: adminHeaders(),
     body: JSON.stringify({
-      role: 'GENERAL_OFFICER',
       departmentId: String(nextDepartment._id),
       governmentOfficerId: 'GOV-2002',
     }),
@@ -491,7 +586,7 @@ test('admin can update staff role, department, and officer ID with an audit reco
   assert.equal('passwordHash' in updatedBody.user, false)
 
   const audit = await AuditEvent.findOne({
-    action: 'USER_ROLE_UPDATED',
+    action: 'USER_UPDATED',
     actorId: adminUser._id,
   }).sort({ occurredAt: -1 }).lean()
   assert.ok(audit)

@@ -57,7 +57,7 @@ export function AdminDepartments({
   return (
     <>
       {actionMessage && <p className={`admin-inline-message${actionMessageIsError ? ' admin-inline-message--error' : ''}`} role={actionMessageIsError ? 'alert' : 'status'}>{actionMessage}</p>}
-      <div className="admin-section-grid">
+      <div className={`admin-section-grid${formOpen ? '' : ' admin-section-grid--single'}`}>
         <section className="admin-panel">
           <div className="admin-panel__heading admin-panel__heading--wrap">
             <div><p className="admin-eyebrow">DIRECTORY</p><h2>Department records</h2><p>{filteredDepartments.length} of {departments.length} departments</p></div>

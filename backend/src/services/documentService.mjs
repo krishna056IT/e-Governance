@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import mongoose from 'mongoose'
 import { env } from '../config/env.mjs'
@@ -7,6 +7,7 @@ import { recognizeDocument } from '../processing/localOcr.mjs'
 import Application from '../models/Application.mjs'
 import Document from '../models/Document.mjs'
 import { createAuditEvent } from './auditService.mjs'
+import { findActiveDuplicateDocument } from './activeDuplicateDocumentService.mjs'
 import {
   readOriginal,
   removeStorageFile,
@@ -77,6 +78,20 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
     throw requestError('Documents can only be uploaded while the application is a draft.', 409)
   }
   const { extension, mimeType } = validateUploadedFile(file)
+  const contentHash = createHash('sha256').update(file.buffer).digest('hex')
+  if (actor.role === 'APPLICANT' || actor.role === 'GENERAL_OFFICER') {
+    const duplicate = await findActiveDuplicateDocument({
+      applicantId,
+      applicationId: application._id,
+      contentHashes: [contentHash],
+    })
+    if (duplicate) {
+      throw requestError(
+        `This file is already included in your active ${duplicate.applicationType} application. You can submit it again after that application is rejected or completed.`,
+        409,
+      )
+    }
+  }
   const storageId = await storeOriginal(file.buffer, extension)
   let document
   try {
@@ -84,6 +99,7 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
       applicationId: application._id,
       applicantId,
       originalFilename: safeOriginalFilename(file.originalname),
+      contentHash,
       documentType: mimeType,
       mimeType,
       fileSize: file.size,
@@ -105,7 +121,26 @@ export async function createApplicantDocument({ actor, applicationId, file }) {
 
   try {
     const original = await readOriginal(storageId, extension)
-    const { text, confidence } = await recognizeDocument({ buffer: original, mimeType })
+    const { text, confidence, diagnostics } = await recognizeDocument({ buffer: original, mimeType })
+    if (env.NODE_ENV !== 'production') {
+      console.info('[DOCUMENT_OCR]', JSON.stringify({
+        applicationId: String(application._id),
+        documentId: String(document._id),
+        provider: diagnostics.provider,
+        model: diagnostics.model,
+        confidenceScale: diagnostics.confidenceScale,
+        pageCount: diagnostics.pageCount,
+        characterCount: diagnostics.characterCount,
+        wordCount: diagnostics.wordCount,
+        blockCount: diagnostics.blockCount,
+        lineCount: diagnostics.lineCount,
+        paragraphCount: diagnostics.paragraphCount,
+        tableCount: diagnostics.tableCount,
+        missingConfidencePageCount: diagnostics.missingConfidencePageCount,
+        ocrConfidence: confidence,
+        ocrThreshold: env.OCR_THRESHOLD,
+      }))
+    }
     const assessment = assessOcrConfidence(confidence)
     const extractedTextStorageId = await storeExtractedText(randomUUID(), text)
     document.extractedTextStorageId = extractedTextStorageId
@@ -175,6 +210,7 @@ export async function getOfficerOriginalDocument(officerId, departmentId, docume
   const application = await Application.findOne({
     _id: document.applicationId,
     departmentId,
+    assignedOfficerId: officerId,
     status: { $in: ['OFFICER_REVIEW', 'ASSIGNED', 'UNDER_REVIEW'] },
   }).select('_id').lean()
   if (!application) return null

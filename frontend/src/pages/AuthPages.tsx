@@ -4,6 +4,7 @@ import { roleHomePath, useAuth } from '../auth/AuthContext'
 import { AuthLayout } from '../components/layout'
 import { Field } from '../components/ui'
 import { AuthApiError, authService } from '../services/authService'
+import { applicationStatusService, type PublicApplicationStatus } from '../services/applicationStatusService'
 import { officerRegistrationService } from '../services/officerRegistrationService'
 import type { UserArea, UserRole } from '../types'
 
@@ -125,11 +126,216 @@ export function ApplicantLoginPage() {
         </form>
 
         <p className="auth-switch">
+          <Link to="/password/forgot?area=applicant">Forgot your password?</Link>
+        </p>
+        <p className="auth-switch">
           New to e-Governance?{' '}
           <Link to="/applicant/register">
             Create an account
           </Link>
         </p>
+      </div>
+    </AuthLayout>
+  )
+}
+
+export function ApplicantStatusAccessPage() {
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [applications, setApplications] = useState<PublicApplicationStatus[] | null>(null)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const identifier = String(data.get('identifier') ?? '').trim()
+    setError('')
+    setLoading(true)
+    setApplications(null)
+    try {
+      setApplications(await applicationStatusService.lookup(identifier))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to retrieve application status.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <AuthLayout>
+      <div className="auth-card">
+        <Link className="back-link" to="/">← Home</Link>
+        <p className="eyebrow">APPLICATION STATUS</p>
+        <h1>Find your application</h1>
+        <p className="auth-card__intro">Enter the email address used on your application or its Application ID.</p>
+        {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
+        <form onSubmit={(event) => void handleSubmit(event)} className="form-stack">
+          <Field
+            label="Email address or Application ID"
+            type="text"
+            name="identifier"
+            autoComplete="email"
+            placeholder="you@example.com or application ID"
+            required
+          />
+          <button className="button button--primary button--full" type="submit" disabled={loading}>
+            {loading ? 'Searching…' : 'Find application status'}
+            {!loading && <span aria-hidden="true"> →</span>}
+          </button>
+        </form>
+        {applications && (
+          <section className="application-status-results" aria-live="polite">
+            <h2>{applications.length ? 'Applications found' : 'No applications found'}</h2>
+            {applications.length ? applications.map((application) => (
+              <article className="application-status-result" key={application.id}>
+                <h3>{application.applicationType}</h3>
+                <p><strong>Status:</strong> {application.status.replaceAll('_', ' ')}</p>
+                <p><strong>Application ID:</strong> <span className="application-status-result__id">{application.id}</span></p>
+                {application.submittedAt && <p><strong>Submitted:</strong> {new Date(application.submittedAt).toLocaleString()}</p>}
+                <p><strong>Last updated:</strong> {new Date(application.updatedAt).toLocaleString()}</p>
+              </article>
+            )) : <p className="muted">No matching application was found. Check the email address or Application ID and try again.</p>}
+          </section>
+        )}
+        <p className="auth-switch">For full application details, <Link to="/applicant/login">sign in</Link> to your account.</p>
+      </div>
+    </AuthLayout>
+  )
+}
+
+const passwordResetDestinations = new Set([
+  '/applicant/login',
+  '/officer/login',
+  '/general-officer/login',
+  '/human-verifier/login',
+  '/admin/auth',
+])
+const passwordResetLoginPaths: Record<string, string> = {
+  applicant: '/applicant/login',
+  officer: '/officer/login',
+  'general-officer': '/general-officer/login',
+  'human-verifier': '/human-verifier/login',
+  admin: '/admin/auth',
+}
+
+export function ForgotPasswordPage() {
+  const [searchParams] = useSearchParams()
+  const area = searchParams.get('area') || 'applicant'
+  const isGeneralOfficer = area === 'general-officer'
+  const isOfficer = area === 'officer'
+  const usesOfficerId = isGeneralOfficer
+  const fieldLabel = usesOfficerId
+    ? 'General Officer ID'
+    : isOfficer
+      ? 'Government Officer ID or email'
+      : 'Email address'
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [resetPath, setResetPath] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const identifier = String(data.get('identifier') ?? '').trim()
+    setError('')
+    setMessage('')
+    setResetPath('')
+    setLoading(true)
+    try {
+      const result = await authService.requestPasswordReset(identifier)
+      setMessage(result.message)
+      setResetPath(result.resetPath || '')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The reset request could not be completed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <AuthLayout>
+      <div className="auth-card">
+        <Link className="back-link" to="/">← Home</Link>
+        <p className="eyebrow">ACCOUNT RECOVERY</p>
+        <h1>Forgot your password?</h1>
+        <p className="auth-card__intro">Enter the email address or staff ID associated with your account. If it is eligible, we’ll send a one-time reset link.</p>
+        {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
+        {message && <p className="form-alert" role="status">{message}</p>}
+        {resetPath && (
+          <p className="form-alert">
+            Development reset link: <Link to={resetPath}>Continue to reset password</Link>
+          </p>
+        )}
+        <form onSubmit={(event) => void handleSubmit(event)} className="form-stack">
+          <Field
+            label={fieldLabel}
+            type={isGeneralOfficer || isOfficer ? 'text' : 'email'}
+            name="identifier"
+            autoComplete={isGeneralOfficer || isOfficer ? 'username' : 'email'}
+            placeholder={isGeneralOfficer ? 'ABC-123' : isOfficer ? 'ID or you@example.com' : 'you@example.com'}
+            required
+          />
+          <button className="button button--primary button--full" type="submit" disabled={loading}>
+            {loading ? 'Sending reset link…' : 'Send reset link'}
+          </button>
+        </form>
+        <p className="auth-switch"><Link to={passwordResetLoginPaths[area] || '/applicant/login'}>Return to sign in</Link></p>
+      </div>
+    </AuthLayout>
+  )
+}
+
+export function ResetPasswordPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const token = searchParams.get('token') || ''
+  const requestedDestination = searchParams.get('returnTo') || ''
+  const returnTo = passwordResetDestinations.has(requestedDestination)
+    ? requestedDestination
+    : '/applicant/login'
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    const newPassword = String(data.get('newPassword') ?? '')
+    const confirmPassword = String(data.get('confirmPassword') ?? '')
+    if (newPassword !== confirmPassword) {
+      setError('The passwords do not match.')
+      return
+    }
+    setError('')
+    setLoading(true)
+    try {
+      const result = await authService.completePasswordReset(token, newPassword)
+      setMessage(result.message)
+      window.setTimeout(() => navigate(returnTo, { replace: true }), 1200)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The password could not be reset.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <AuthLayout>
+      <div className="auth-card">
+        <Link className="back-link" to="/">← Home</Link>
+        <p className="eyebrow">ACCOUNT RECOVERY</p>
+        <h1>Reset your password</h1>
+        {!token ? <p className="form-alert form-alert--error" role="alert">This password reset link is missing or invalid. Request a new link.</p> : <>
+          <p className="auth-card__intro">Choose a new password between 12 and 128 characters.</p>
+          {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
+          {message && <p className="form-alert" role="status">{message}</p>}
+          {!message && <form onSubmit={(event) => void handleSubmit(event)} className="form-stack">
+            <Field label="New password" type="password" name="newPassword" autoComplete="new-password" minLength={12} maxLength={128} required />
+            <Field label="Confirm new password" type="password" name="confirmPassword" autoComplete="new-password" minLength={12} maxLength={128} required />
+            <button className="button button--primary button--full" type="submit" disabled={loading}>{loading ? 'Resetting password…' : 'Reset password'}</button>
+          </form>}
+        </>}
+        <p className="auth-switch"><Link to="/password/forgot">Request a new reset link</Link></p>
       </div>
     </AuthLayout>
   )
@@ -315,6 +521,8 @@ export function StaffLoginPage({
         <p className="auth-card__intro">
           {area === 'officer'
             ? 'Sign in with your Government Officer ID and password.'
+            : area === 'general-officer'
+              ? 'Sign in with your General Officer ID and password.'
             : 'Sign in with the email and password associated with your account.'}
         </p>
 
@@ -326,11 +534,13 @@ export function StaffLoginPage({
 
         <form onSubmit={handleSubmit} className="form-stack">
           <Field
-            label={area === 'officer' ? 'Government Officer ID or email' : 'Email address'}
-            type={area === 'officer' ? 'text' : 'email'}
+            label={area === 'officer'
+              ? 'Government Officer ID or email'
+              : area === 'general-officer' ? 'General Officer ID' : 'Email address'}
+            type={area === 'officer' || area === 'general-officer' ? 'text' : 'email'}
             name="identifier"
-            autoComplete={area === 'officer' ? 'username' : 'email'}
-            placeholder={area === 'officer' ? 'REV-001' : undefined}
+            autoComplete={area === 'officer' || area === 'general-officer' ? 'username' : 'email'}
+            placeholder={area === 'officer' || area === 'general-officer' ? 'REV-001' : undefined}
             required
           />
 
@@ -350,6 +560,11 @@ export function StaffLoginPage({
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
+        {area !== 'admin' && (
+          <p className="auth-switch">
+            <Link to={`/password/forgot?area=${encodeURIComponent(area)}`}>Forgot your password?</Link>
+          </p>
+        )}
         {area === 'officer' && (
           <p className="auth-switch">
             Need an Officer account?{' '}
@@ -364,15 +579,34 @@ export function StaffLoginPage({
             Already registered? <Link to="/human-verifier/access">Check approval status</Link>
           </p>
         )}
+        {area === 'general-officer' && (
+          <p className="auth-switch">
+            Need a General Officer account?{' '}
+            <Link to="/general-officer/register">Register for Admin approval</Link>
+            <br />
+            Already registered? <Link to="/general-officer/access">Check approval status</Link>
+          </p>
+        )}
       </div>
     </AuthLayout>
   )
 }
 
 export function OfficerAccessPage() {
+  return <RegistryOfficerAccessPage role="OFFICER" />
+}
+
+export function GeneralOfficerAccessPage() {
+  return <RegistryOfficerAccessPage role="GENERAL_OFFICER" />
+}
+
+function RegistryOfficerAccessPage({ role }: { role: 'OFFICER' | 'GENERAL_OFFICER' }) {
   const [searchParams] = useSearchParams()
+  const isGeneralOfficer = role === 'GENERAL_OFFICER'
+  const basePath = isGeneralOfficer ? '/general-officer' : '/officer'
+  const roleName = isGeneralOfficer ? 'General Officer' : 'Officer'
   const [governmentOfficerId, setGovernmentOfficerId] = useState(
-    searchParams.get('governmentOfficerId') || '',
+    searchParams.get('governmentOfficerId') || searchParams.get('officerId') || '',
   )
   const [registration, setRegistration] = useState<{
     governmentOfficerId?: string
@@ -383,7 +617,9 @@ export function OfficerAccessPage() {
   } | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const registrationAccessToken = localStorage.getItem('officerRegistrationAccessToken') || ''
+  const registrationAccessToken = localStorage.getItem(
+    isGeneralOfficer ? 'generalOfficerRegistrationAccessToken' : 'officerRegistrationAccessToken',
+  ) || ''
 
   async function checkStatus(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault()
@@ -395,7 +631,7 @@ export function OfficerAccessPage() {
     setLoading(true)
     setError('')
     try {
-      const result = await officerRegistrationService.getStatus('OFFICER', officerId, registrationAccessToken || undefined)
+      const result = await officerRegistrationService.getStatus(role, officerId, registrationAccessToken || undefined)
       setRegistration(result)
       setGovernmentOfficerId(result.governmentOfficerId || officerId)
     } catch (reason) {
@@ -411,8 +647,8 @@ export function OfficerAccessPage() {
   return (
     <AuthLayout>
       <div className="auth-card">
-        <Link className="back-link" to="/officer/login">← Officer sign in</Link>
-        <p className="eyebrow">OFFICER ACCESS</p>
+        <Link className="back-link" to={`${basePath}/login`}>← {roleName} sign in</Link>
+        <p className="eyebrow">{roleName.toUpperCase()} ACCESS</p>
         <h1>Check approval status</h1>
         <p className="auth-card__intro">Enter your Government Officer ID to check your registration status. Your ID is not a password and cannot authorize password setup.</p>
         {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
@@ -437,8 +673,8 @@ export function OfficerAccessPage() {
         {registration?.status === 'NOT_REGISTERED' && (
           <section className="form-alert" role="status">
             <strong>No registration request found</strong>
-            <p>The Government Officer ID is valid. Submit an Officer registration request to continue.</p>
-            <Link className="button button--secondary" to={`/officer/register?governmentOfficerId=${encodeURIComponent(registration.governmentOfficerId || governmentOfficerId)}`}>Register as an Officer</Link>
+            <p>The Government Officer ID is valid. Submit a {roleName} registration request to continue.</p>
+            <Link className="button button--secondary" to={`${basePath}/register?governmentOfficerId=${encodeURIComponent(registration.governmentOfficerId || governmentOfficerId)}`}>Register as a {roleName}</Link>
           </section>
         )}
         {registration?.status === 'PENDING' && (
@@ -451,14 +687,14 @@ export function OfficerAccessPage() {
         {registration?.status === 'REJECTED' && (
           <section className="form-alert form-alert--error" role="status">
             <strong>Registration Rejected</strong>
-            <p>Your officer registration was not approved.</p>
+            <p>Your {roleName.toLowerCase()} registration was not approved.</p>
             {registration.rejectionReason && <p>Reason: {registration.rejectionReason}</p>}
           </section>
         )}
         {registration?.status === 'APPROVED' && (
           <section className="form-alert" role="status">
             <strong>Registration Approved ✓</strong>
-            <p>Your officer registration has been approved by the administrator.</p>
+            <p>Your {roleName.toLowerCase()} registration has been approved by the administrator.</p>
             <p>Your account is ready for password setup.</p>
             {registration.passwordSetupAvailable && registration.passwordSetupUrl && (
               <Link className="button button--primary" to={registration.passwordSetupUrl}>Set Up Your Password</Link>
@@ -467,19 +703,19 @@ export function OfficerAccessPage() {
         )}
         {registration?.status === 'ACTIVE' && (
           <section className="form-alert" role="status">
-            <strong>Your officer account is active.</strong>
-            <Link className="button button--primary" to="/officer/login">Go to Officer Login</Link>
+            <strong>Your {roleName.toLowerCase()} account is active.</strong>
+            <Link className="button button--primary" to={`${basePath}/login`}>Go to {roleName} Login</Link>
           </section>
         )}
         {registration?.status === 'SUSPENDED' && (
           <section className="form-alert form-alert--error" role="status">
-            <strong>This Officer account is inactive.</strong>
+            <strong>This {roleName} account is inactive.</strong>
             <p>Please contact the administrator.</p>
           </section>
         )}
         <p className="auth-switch">
           Need to register?{' '}
-          <Link to={`/officer/register${governmentOfficerId ? `?governmentOfficerId=${encodeURIComponent(governmentOfficerId)}` : ''}`}>Register with your Government Officer ID</Link>
+          <Link to={`${basePath}/register${governmentOfficerId ? `?governmentOfficerId=${encodeURIComponent(governmentOfficerId)}` : ''}`}>Register with your Government Officer ID</Link>
         </p>
       </div>
     </AuthLayout>
@@ -601,10 +837,13 @@ export function HumanVerifierAccessPage() {
   )
 }
 
-export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialType?: 'OFFICER' | 'HUMAN_VERIFIER' }) {
+export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialType?: 'OFFICER' | 'HUMAN_VERIFIER' | 'GENERAL_OFFICER' }) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [officerType, setOfficerType] = useState<'OFFICER' | 'HUMAN_VERIFIER'>(initialType)
+  const [officerType, setOfficerType] = useState<'OFFICER' | 'HUMAN_VERIFIER' | 'GENERAL_OFFICER'>(initialType)
+  const isRegistryOfficer = officerType === 'OFFICER' || officerType === 'GENERAL_OFFICER'
+  const rolePath = officerType === 'GENERAL_OFFICER' ? '/general-officer' : officerType === 'OFFICER' ? '/officer' : '/human-verifier'
+  const roleName = officerType === 'GENERAL_OFFICER' ? 'General Officer' : officerType === 'OFFICER' ? 'Officer' : 'Human Verifier Officer'
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [validatedIdentity, setValidatedIdentity] = useState<{
@@ -622,9 +861,9 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
     setError('')
     setLoading(true)
     try {
-      if (officerType === 'OFFICER') {
+      if (isRegistryOfficer) {
         if (!validatedIdentity) {
-          const result = await authService.validateOfficerRegistration(governmentOfficerId)
+          const result = await authService.validateOfficerRegistration(governmentOfficerId, officerType)
           setValidatedIdentity({
             departmentName: result.department.name,
             governmentOfficerId: result.governmentOfficerId,
@@ -633,9 +872,12 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
             reRegistered: result.reRegistered,
           })
         } else {
-          const result = await authService.registerOfficer(governmentOfficerId)
-          localStorage.setItem('officerRegistrationAccessToken', result.registrationAccessToken)
-          navigate(`/officer/access?governmentOfficerId=${encodeURIComponent(result.user.governmentOfficerId || governmentOfficerId)}`, { replace: true })
+          const result = await authService.registerOfficer(governmentOfficerId, officerType)
+          localStorage.setItem(
+            officerType === 'GENERAL_OFFICER' ? 'generalOfficerRegistrationAccessToken' : 'officerRegistrationAccessToken',
+            result.registrationAccessToken,
+          )
+          navigate(`${rolePath}/access?governmentOfficerId=${encodeURIComponent(result.user.governmentOfficerId || governmentOfficerId)}`, { replace: true })
         }
       } else {
         const email = String(data.get('email') ?? '').trim().toLowerCase()
@@ -645,11 +887,11 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
         navigate(`/human-verifier/access?email=${encodeURIComponent(result.user.email)}`, { replace: true })
       }
     } catch (reason) {
-      if (officerType === 'OFFICER' && reason instanceof AuthApiError && reason.status === 409) {
-        navigate(`/officer/access?governmentOfficerId=${encodeURIComponent(governmentOfficerId)}`, { replace: true })
+      if (isRegistryOfficer && reason instanceof AuthApiError && reason.status === 409) {
+        navigate(`${rolePath}/access?governmentOfficerId=${encodeURIComponent(governmentOfficerId)}`, { replace: true })
         return
       }
-      setError(officerType === 'OFFICER'
+      setError(isRegistryOfficer
         ? officerRegistrationError(reason)
         : reason instanceof Error ? reason.message : 'Unable to submit Human Verifier registration.')
     } finally {
@@ -660,19 +902,23 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
   return (
     <AuthLayout>
       <div className="auth-card">
-        <Link className="back-link" to={officerType === 'OFFICER' ? '/officer/login' : '/human-verifier/login'}>← {officerType === 'OFFICER' ? 'Officer' : 'Human Verifier Officer'} sign in</Link>
-        <p className="eyebrow">OFFICER ACCESS</p>
-        <h1>{officerType === 'OFFICER' ? 'Officer registration' : 'Human Verifier Officer registration'}</h1>
-        <p className="auth-card__intro">Choose your officer type. All registrations are reviewed by an administrator before account access is enabled.</p>
+        <Link className="back-link" to={`${rolePath}/login`}>← {roleName} sign in</Link>
+        <p className="eyebrow">{roleName.toUpperCase()} ACCESS</p>
+        <h1>{roleName} registration</h1>
+        <p className="auth-card__intro">
+          {initialType === 'GENERAL_OFFICER'
+            ? 'Enter your Government Officer ID to validate your registered identity. Your account is enabled only after administrator approval.'
+            : 'Choose your officer type. All registrations are reviewed by an administrator before account access is enabled.'}
+        </p>
         {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
         <form onSubmit={(event) => void handleSubmit(event)} className="form-stack">
-          <label className="field">
+          {initialType !== 'GENERAL_OFFICER' && <label className="field">
             <span className="field-label">Officer type</span>
             <select
               className="field-input"
               value={officerType}
               onChange={(event) => {
-                setOfficerType(event.target.value as 'OFFICER' | 'HUMAN_VERIFIER')
+                setOfficerType(event.target.value as 'OFFICER' | 'HUMAN_VERIFIER' | 'GENERAL_OFFICER')
                 setValidatedIdentity(null)
                 setError('')
               }}
@@ -680,8 +926,8 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
               <option value="OFFICER">Government Officer</option>
               <option value="HUMAN_VERIFIER">Human Verifier Officer</option>
             </select>
-          </label>
-          {officerType === 'OFFICER' ? (
+          </label>}
+          {isRegistryOfficer ? (
             <>
               <Field
                 label="Government Officer ID"
@@ -702,11 +948,11 @@ export function OfficerRegistrationPage({ initialType = 'OFFICER' }: { initialTy
                   {validatedIdentity.reRegistered && <p>Your earlier rejected registration can be resubmitted for review.</p>}
                 </section>
               )}
-              <p className="muted">Name, official email, and Department come from the Government Officer registry and cannot be changed here.</p>
+              <p className="muted">Name, official email, and Department come from the Government Officer registry and cannot be changed here. Your account is enabled after administrator approval.</p>
               <button className="button button--primary button--full" type="submit" disabled={loading}>
                 {loading ? (validatedIdentity ? 'Submitting…' : 'Validating…') : (validatedIdentity ? 'Submit registration' : 'Validate identity')}
               </button>
-              <p className="auth-switch">Already submitted a request? <Link to="/officer/access">Check approval status</Link></p>
+              <p className="auth-switch">Already submitted a request? <Link to={`${rolePath}/access`}>Check approval status</Link></p>
             </>
           ) : (
             <>
@@ -736,22 +982,37 @@ export function HumanVerifierRegistrationPage() {
   return <OfficerRegistrationPage initialType="HUMAN_VERIFIER" />
 }
 
+export function GeneralOfficerRegistrationPage() {
+  return <OfficerRegistrationPage initialType="GENERAL_OFFICER" />
+}
+
 export function OfficerSetupPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
-  const role: 'OFFICER' | 'HUMAN_VERIFIER' = location.pathname.startsWith('/human-verifier/')
+  const role: 'OFFICER' | 'HUMAN_VERIFIER' | 'GENERAL_OFFICER' = location.pathname.startsWith('/human-verifier/')
     ? 'HUMAN_VERIFIER'
-    : 'OFFICER'
+    : location.pathname.startsWith('/general-officer/')
+      ? 'GENERAL_OFFICER'
+      : 'OFFICER'
   const setupToken = searchParams.get('token') || ''
   const governmentOfficerId = searchParams.get('officerId') || ''
   const email = searchParams.get('email') || ''
   const registrationMode = searchParams.get('registration') === '1'
+  const isRegistryOfficer = role === 'OFFICER' || role === 'GENERAL_OFFICER'
   const registrationAccessToken = localStorage.getItem(
-    role === 'OFFICER' ? 'officerRegistrationAccessToken' : 'humanVerifierRegistrationAccessToken',
+    role === 'OFFICER'
+      ? 'officerRegistrationAccessToken'
+      : role === 'GENERAL_OFFICER'
+        ? 'generalOfficerRegistrationAccessToken'
+        : 'humanVerifierRegistrationAccessToken',
   ) || ''
-  const loginPath = role === 'OFFICER' ? '/officer/login' : '/human-verifier/login'
-  const roleLabel = role === 'OFFICER' ? 'Officer' : 'Human Verifier Officer'
+  const loginPath = role === 'OFFICER'
+    ? '/officer/login'
+    : role === 'GENERAL_OFFICER'
+      ? '/general-officer/login'
+      : '/human-verifier/login'
+  const roleLabel = role === 'OFFICER' ? 'Officer' : role === 'GENERAL_OFFICER' ? 'General Officer' : 'Human Verifier Officer'
   const [error, setError] = useState('')
   const [complete, setComplete] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -771,13 +1032,15 @@ export function OfficerSetupPage() {
       if (registrationMode) {
         await officerRegistrationService.completePasswordSetup(
           role,
-          role === 'OFFICER' ? governmentOfficerId : email,
+          isRegistryOfficer ? governmentOfficerId : email,
           registrationAccessToken,
           password,
         )
         localStorage.removeItem(role === 'OFFICER'
           ? 'officerRegistrationAccessToken'
-          : 'humanVerifierRegistrationAccessToken')
+          : role === 'GENERAL_OFFICER'
+            ? 'generalOfficerRegistrationAccessToken'
+            : 'humanVerifierRegistrationAccessToken')
       } else {
         await authService.completeOfficerSetup(setupToken, password, role)
       }
@@ -795,12 +1058,12 @@ export function OfficerSetupPage() {
         <Link className="back-link" to={loginPath}>← {roleLabel} sign in</Link>
         <p className="eyebrow">{roleLabel.toUpperCase()} ACCESS</p>
         <h1>Set Your Password</h1>
-        {governmentOfficerId && <p>Government Officer ID: <strong>{governmentOfficerId}</strong></p>}
+        {isRegistryOfficer && governmentOfficerId && <p>Government Officer ID: <strong>{governmentOfficerId}</strong></p>}
         {role === 'HUMAN_VERIFIER' && email && <p>Official email: <strong>{email}</strong></p>}
         {error && <p className="form-alert form-alert--error" role="alert">{error}</p>}
         {complete ? (
           <div className="form-alert" role="status">
-            <p>Password setup is complete. Sign in with your {role === 'OFFICER' ? 'Government Officer ID' : 'official email'} and this password.</p>
+            <p>Password setup is complete. Sign in with your {isRegistryOfficer ? 'registered email' : 'official email'} and this password.</p>
             <button className="button button--primary" type="button" onClick={() => navigate(loginPath, { replace: true })}>Go to {roleLabel} Login</button>
           </div>
         ) : (
@@ -808,7 +1071,7 @@ export function OfficerSetupPage() {
             <p className="auth-card__intro">{registrationMode ? 'Your registration has been approved. Choose a password to activate your account.' : `Choose your ${roleLabel} account password. This one-time setup link expires and can only be used once.`}</p>
             <Field label="New password" type="password" name="password" autoComplete="new-password" minLength={12} maxLength={128} required />
             <Field label="Confirm password" type="password" name="confirmPassword" autoComplete="new-password" minLength={12} maxLength={128} required />
-            <button className="button button--primary button--full" type="submit" disabled={loading || (registrationMode ? !registrationAccessToken || (role === 'OFFICER' ? !governmentOfficerId : !email) : !setupToken)}>
+            <button className="button button--primary button--full" type="submit" disabled={loading || (registrationMode ? !registrationAccessToken || (isRegistryOfficer ? !governmentOfficerId : !email) : !setupToken)}>
               {loading ? 'Setting password…' : 'Set Password'}
             </button>
           </form>

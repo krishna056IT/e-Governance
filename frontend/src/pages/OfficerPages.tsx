@@ -12,6 +12,7 @@ import {
   InfoCard,
   LoadingState,
   MetricCard,
+  OcrTextDisplay,
   PageHeader,
   StatusBadge,
   TextAreaField,
@@ -71,17 +72,16 @@ function OfficerDocumentCard({ document }: { document: ApplicationDocument }) {
           <h3>{document.name}</h3>
           <p className="muted">{document.documentType} · {new Date(document.addedAt).toLocaleString()}</p>
         </div>
-        <span className="inline-status">{document.ocrStatus || document.status}</span>
+        <span className="inline-status">{document.humanVerificationStatus || (document.ocrStatus === 'LOW_CONFIDENCE' ? 'Verification pending' : document.ocrStatus || document.status)}</span>
       </div>
       <dl className="summary-grid">
-        <div><dt>OCR confidence</dt><dd>{document.ocrConfidence === null ? 'Unavailable' : `${document.ocrConfidence}%`}</dd></div>
         <div><dt>Human verification</dt><dd>{document.humanVerificationStatus || 'Not required'}</dd></div>
         {document.humanVerificationDecision && <div><dt>Verification decision</dt><dd>{document.humanVerificationDecision}</dd></div>}
         {document.humanVerifiedBy && <div><dt>Verified by</dt><dd>{document.humanVerifiedBy}</dd></div>}
         {document.humanVerifiedAt && <div><dt>Verified at</dt><dd>{new Date(document.humanVerifiedAt).toLocaleString()}</dd></div>}
         {document.humanVerificationNote && <div className="summary-grid__wide"><dt>Verification note</dt><dd>{document.humanVerificationNote}</dd></div>}
       </dl>
-      {document.extractedText && <div className="officer-ocr-output"><strong>OCR-extracted information</strong><pre className="document-preview">{document.extractedText}</pre></div>}
+      {document.extractedText && <div className="officer-ocr-output"><strong>OCR-extracted information</strong><OcrTextDisplay text={document.extractedText} /></div>}
       {document.correctedExtractedData?.length ? (
         <div className="officer-ocr-output">
           <strong>Human-verified corrected information</strong>

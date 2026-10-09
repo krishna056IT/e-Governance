@@ -23,6 +23,8 @@ let server
 let baseUrl
 let officer
 let officerToken
+let sameDepartmentOfficer
+let sameDepartmentOfficerToken
 let otherDepartmentToken
 let applicantToken
 let unprivilegedOfficerToken
@@ -36,7 +38,14 @@ before(async () => {
   const departmentA = new mongoose.Types.ObjectId()
   const departmentB = new mongoose.Types.ObjectId()
   const passwordHash = await bcrypt.hash('TestPassword123!', 10)
-  const [createdOfficer, otherDepartmentOfficer, applicant, unprivilegedOfficer, createdVerifier] = await User.create([
+  const [
+    createdOfficer,
+    otherDepartmentOfficer,
+    applicant,
+    unprivilegedOfficer,
+    createdVerifier,
+    createdSameDepartmentOfficer,
+  ] = await User.create([
     {
       email: `officer-review-${runId}@example.test`,
       displayName: 'Department A Officer',
@@ -76,12 +85,26 @@ before(async () => {
       role: 'HUMAN_VERIFIER',
       permissions: ['HUMAN_VERIFY_OCR'],
     },
+    {
+      email: `officer-review-same-department-${runId}@example.test`,
+      displayName: 'Second Department A Officer',
+      passwordHash,
+      role: 'OFFICER',
+      departmentId: String(departmentA),
+      permissions: ['APPLICATION_VIEW_ASSIGNED'],
+    },
   ])
   officer = createdOfficer
+  sameDepartmentOfficer = createdSameDepartmentOfficer
   verifier = createdVerifier
   createdUsers.push(createdOfficer, otherDepartmentOfficer, applicant, unprivilegedOfficer, createdVerifier)
   createdEmails.push(...createdUsers.map((user) => user.email))
   officerToken = signToken({ id: String(createdOfficer._id), role: createdOfficer.role, permissions: createdOfficer.permissions })
+  sameDepartmentOfficerToken = signToken({
+    id: String(createdSameDepartmentOfficer._id),
+    role: createdSameDepartmentOfficer.role,
+    permissions: createdSameDepartmentOfficer.permissions,
+  })
   otherDepartmentToken = signToken({
     id: String(otherDepartmentOfficer._id),
     role: otherDepartmentOfficer.role,
@@ -122,6 +145,7 @@ after(async () => {
 
 async function createApplication({
   departmentId = officer.departmentId,
+  assignedOfficerId = officer._id,
   status = 'ASSIGNED',
   withVerifiedDocument = false,
 } = {}) {
@@ -136,6 +160,7 @@ async function createApplication({
       details: 'Review integration test application details.',
     },
     departmentId,
+    assignedOfficerId,
     status,
     submittedAt: new Date(),
   })
@@ -200,11 +225,15 @@ async function makeDecision(applicationId, decision, reason, token = officerToke
   })
 }
 
-test('Officer queue is MongoDB-backed and limited to the authenticated Department', async () => {
+test('Officer queue and review scope include only applications assigned to the authenticated Officer', async () => {
   const inScope = await createApplication({ status: 'ASSIGNED' })
   const underReview = await createApplication({ status: 'UNDER_REVIEW' })
+  const assignedToPeer = await createApplication({
+    assignedOfficerId: sameDepartmentOfficer._id,
+  })
   const outOfScope = await createApplication({
     departmentId: createdUsers.find((user) => user.displayName === 'Department B Officer').departmentId,
+    assignedOfficerId: createdUsers.find((user) => user.displayName === 'Department B Officer')._id,
   })
 
   const response = await request('/api/officer/applications', officerToken)
@@ -212,7 +241,20 @@ test('Officer queue is MongoDB-backed and limited to the authenticated Departmen
   assert.equal(response.status, 200)
   assert.ok(applications.some((application) => application.id === String(inScope.application._id)))
   assert.ok(applications.some((application) => application.id === String(underReview.application._id)))
+  assert.ok(!applications.some((application) => application.id === String(assignedToPeer.application._id)))
   assert.ok(!applications.some((application) => application.id === String(outOfScope.application._id)))
+
+  const peerResponse = await request('/api/officer/applications', sameDepartmentOfficerToken)
+  const peerApplications = (await peerResponse.json()).applications
+  assert.equal(peerResponse.status, 200)
+  assert.deepEqual(peerApplications.map((application) => application.id), [
+    String(assignedToPeer.application._id),
+  ])
+  assert.equal((await request(
+    `/api/officer/applications/${assignedToPeer.application._id}`,
+    officerToken,
+  )).status, 404)
+  assert.equal((await startReview(assignedToPeer.application._id)).status, 404)
 
   const otherDepartment = await request('/api/officer/applications', otherDepartmentToken)
   assert.equal(otherDepartment.status, 200)
@@ -260,6 +302,12 @@ test('Officer can retrieve applicant, document, OCR, and Human Verification info
     '.png',
   ), originalBuffer)
 
+  const sameDepartmentPeerOriginal = await request(
+    `/api/documents/${document._id}`,
+    sameDepartmentOfficerToken,
+  )
+  assert.equal(sameDepartmentPeerOriginal.status, 404)
+
   const foreignOriginal = await request(`/api/documents/${document._id}`, otherDepartmentToken)
   assert.equal(foreignOriginal.status, 404)
 })
@@ -298,6 +346,24 @@ test('Approve persists APPROVED status, decision Officer ID, timestamp, and opti
 
 test('Reject and escalation require and persist reasons with the authenticated Officer identity', async () => {
   const rejected = await createApplication({ status: 'UNDER_REVIEW' })
+  const unauthenticatedDecision = await request(
+    `/api/officer/applications/${rejected.application._id}/decision`,
+    null,
+    { method: 'POST', body: JSON.stringify({ decision: 'REJECTED', reason: 'Unauthenticated rejection.' }) },
+  )
+  assert.equal(unauthenticatedDecision.status, 401)
+  const applicantDecision = await request(
+    `/api/officer/applications/${rejected.application._id}/decision`,
+    applicantToken,
+    { method: 'POST', body: JSON.stringify({ decision: 'REJECTED', reason: 'Applicant rejection.' }) },
+  )
+  assert.equal(applicantDecision.status, 403)
+  const peerDecision = await request(
+    `/api/officer/applications/${rejected.application._id}/decision`,
+    sameDepartmentOfficerToken,
+    { method: 'POST', body: JSON.stringify({ decision: 'REJECTED', reason: 'Peer rejection.' }) },
+  )
+  assert.equal(peerDecision.status, 404)
   const missingRejectionReason = await makeDecision(rejected.application._id, 'REJECTED', '  ')
   assert.equal(missingRejectionReason.status, 400)
   const rejectResponse = await makeDecision(rejected.application._id, 'REJECTED', 'Required document is invalid.')
@@ -307,6 +373,28 @@ test('Reject and escalation require and persist reasons with the authenticated O
   assert.equal(rejectedRecord.officerReview.reason, 'Required document is invalid.')
   assert.equal(String(rejectedRecord.officerReview.decidedBy), String(officer._id))
   assert.ok(rejectedRecord.officerReview.decidedAt)
+  const rejectedQueue = await request('/api/officer/applications', officerToken)
+  assert.ok(!(await rejectedQueue.json()).applications.some(
+    (application) => application.id === String(rejected.application._id),
+  ))
+  const applicantViewResponse = await request(
+    `/api/applications/${rejected.application._id}`,
+    applicantToken,
+  )
+  assert.equal(applicantViewResponse.status, 200)
+  const applicantView = (await applicantViewResponse.json()).application
+  assert.equal(applicantView.status, 'REJECTED')
+  assert.equal(applicantView.rejectionReason, 'Required document is invalid.')
+  assert.equal(new Date(applicantView.rejectedAt).toISOString(), rejectedRecord.officerReview.decidedAt.toISOString())
+  assert.equal('officerReview' in applicantView, false)
+  assert.equal((await request(
+    `/api/applications/${rejected.application._id}`,
+    applicantToken,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'REJECTED', rejectionReason: 'Applicant-authored forgery.' }),
+    },
+  )).status, 404)
 
   const escalated = await createApplication({ status: 'UNDER_REVIEW' })
   const missingEscalationReason = await makeDecision(escalated.application._id, 'ESCALATED', '')

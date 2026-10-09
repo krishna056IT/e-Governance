@@ -15,6 +15,8 @@ export interface OfficerRegistrationStatus {
   rejectionReason?: string
 }
 
+export type OfficerRegistrationRole = 'OFFICER' | 'HUMAN_VERIFIER' | 'GENERAL_OFFICER'
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -51,7 +53,7 @@ async function request<T>(
 
 export const officerRegistrationService = {
   getStatus(
-    role: 'OFFICER' | 'HUMAN_VERIFIER',
+    role: OfficerRegistrationRole,
     identifier: string,
     registrationAccessToken?: string,
   ) {
@@ -59,7 +61,7 @@ export const officerRegistrationService = {
       '/officer/registration/status',
       {
         method: 'POST',
-        body: JSON.stringify(role === 'OFFICER'
+        body: JSON.stringify(role === 'OFFICER' || role === 'GENERAL_OFFICER'
           ? { role, governmentOfficerId: identifier }
           : { role, email: identifier }),
       },
@@ -68,7 +70,7 @@ export const officerRegistrationService = {
   },
 
   async completePasswordSetup(
-    role: 'OFFICER' | 'HUMAN_VERIFIER',
+    role: OfficerRegistrationRole,
     identifier: string,
     registrationAccessToken: string,
     temporaryPassword: string,
@@ -77,7 +79,7 @@ export const officerRegistrationService = {
       '/officer/registration/setup',
       {
         method: 'POST',
-        body: JSON.stringify(role === 'OFFICER'
+        body: JSON.stringify(role === 'OFFICER' || role === 'GENERAL_OFFICER'
           ? { role, governmentOfficerId: identifier, temporaryPassword }
           : { role, email: identifier, temporaryPassword }),
       },

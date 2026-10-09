@@ -8,11 +8,12 @@ const statusLabels: Record<ApplicationStatus, string> = {
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
   PROCESSING: 'Processing',
-  HUMAN_VERIFICATION: 'Human verification',
+  HUMAN_VERIFICATION: 'Human Verification Required',
   OFFICER_REVIEW: 'Officer review',
   ROUTED: 'Routed',
-  WAITING_FOR_OFFICER: 'Waiting for Officer',
-  ASSIGNED: 'Assigned',
+  WAITING_FOR_OFFICER: 'Waiting for Officer Assignment',
+  WAITING_FOR_OFFICER_ASSIGNMENT: 'Waiting for Officer Assignment',
+  ASSIGNED: 'Assigned - Waiting for Officer',
   UNDER_REVIEW: 'Under review',
   ESCALATED: 'Escalated',
   GENERAL_OFFICER_REVIEW: 'General Officer review',
@@ -97,6 +98,27 @@ export function TextAreaField({ label, hint, ...props }: { label: string; hint?:
   return <div className="field"><label htmlFor={id}>{label}{props.required && <span aria-hidden="true"> *</span>}</label><textarea id={id} aria-describedby={hint ? `${id}-hint` : undefined} {...props} />{hint && <small id={`${id}-hint`}>{hint}</small>}</div>
 }
 
+export function OcrTextDisplay({ text }: { text?: string | null }) {
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (!lines.length) return <div className="ocr-readable-empty">No text was extracted from this document.</div>
+  return (
+    <div className="ocr-readable" aria-label="Extracted document information">
+      {lines.map((line, index) => {
+        const fieldMatch = line.match(/^(.{1,72}?)(?:\s*[:：]\s*|\s+[-–]\s+)(.+)$/)
+        const hasLabel = Boolean(fieldMatch)
+        const label = fieldMatch?.[1].trim() || ''
+        const value = fieldMatch?.[2].trim() || line
+        return (
+          <div className={`ocr-readable__line${hasLabel ? ' ocr-readable__line--field' : ''}`} key={`${index}-${line}`}>
+            <span className="ocr-readable__index">{String(index + 1).padStart(2, '0')}</span>
+            {hasLabel ? <><strong>{label}</strong><span>{value || '—'}</span></> : <span className="ocr-readable__text">{value}</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function ApplicationTable({ applications, hrefFor }: { applications: ApplicationRecord[]; hrefFor: (application: ApplicationRecord) => string }) {
   if (!applications.length) return <EmptyState title="No applications to show" description="Applications will appear here when available." />
   return (
@@ -122,7 +144,14 @@ export function ApplicationTable({ applications, hrefFor }: { applications: Appl
 
 export function DocumentList({ documents }: { documents: ApplicationRecord['documents'] }) {
   if (!documents.length) return <p className="muted">No documents have been uploaded.</p>
-  return <ul className="document-list">{documents.map((document) => <li key={document.id}><span className="document-list__icon" aria-hidden="true">▤</span><span className="document-list__name">{document.name}<small>{document.mimeType} · {document.status}{document.ocrConfidence !== null ? ` · OCR confidence ${document.ocrConfidence}%` : ''}{document.humanVerificationRequired ? ` · Verification ${document.humanVerificationStatus || 'PENDING'}` : document.status === 'COMPLETED' ? ' · Verification not required' : ''}</small></span><span className="document-list__date">{new Date(document.addedAt).toLocaleDateString()}</span></li>)}</ul>
+  return <ul className="document-list">{documents.map((document) => {
+    const status = document.humanVerificationRequired
+      ? `Verification ${document.humanVerificationStatus || 'PENDING'}`
+      : document.status === 'LOW_CONFIDENCE'
+        ? 'Processing review'
+        : document.status
+    return <li key={document.id}><span className="document-list__icon" aria-hidden="true">▤</span><span className="document-list__name">{document.name}{document.applicationId && <small>Application ID: {document.applicationId} · Type: {document.applicationType || 'Unavailable'}</small>}<small>{document.mimeType} · {status}{!document.humanVerificationRequired && document.status === 'COMPLETED' ? ' · Human Verification not required' : ''}</small></span><span className="document-list__date">{new Date(document.addedAt).toLocaleDateString()}</span></li>
+  })}</ul>
 }
 
 export function Timeline({ entries }: { entries: TimelineEntry[] }) {
@@ -186,5 +215,5 @@ export function InfoCard({ title, children }: { title: string; children: ReactNo
 }
 
 export function ApplicationSummary({ application }: { application: ApplicationRecord }) {
-  return <dl className="summary-grid"><div><dt>Application type</dt><dd>{application.applicationType}</dd></div><div><dt>Applicant</dt><dd>{application.applicantName}</dd></div><div><dt>Contact email</dt><dd>{application.contactEmail}</dd></div><div><dt>Department</dt><dd>{application.department ?? 'Not yet determined'}</dd></div><div><dt>Workflow status</dt><dd><StatusBadge status={application.status} /></dd></div></dl>
+  return <dl className="summary-grid"><div><dt>Application type</dt><dd>{application.applicationType}</dd></div><div><dt>Applicant</dt><dd>{application.applicantName}</dd></div><div><dt>Contact email</dt><dd>{application.contactEmail}</dd></div><div><dt>Department</dt><dd>{application.department ?? 'Not yet determined'}</dd></div><div><dt>Assigned Officer</dt><dd>{application.assignedOfficerName ?? 'Not yet assigned'}</dd></div><div><dt>Workflow status</dt><dd><StatusBadge status={application.status} /></dd></div></dl>
 }

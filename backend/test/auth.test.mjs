@@ -6,12 +6,15 @@ import app from '../src/app.mjs'
 import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
 import { env } from '../src/config/env.mjs'
 import { requireAuth, requirePermission, requireRole, signToken } from '../src/middleware/auth.mjs'
+import Application from '../src/models/Application.mjs'
 import RevokedToken from '../src/models/RevokedToken.mjs'
 import User from '../src/models/User.mjs'
+import { configureOfficerEmailSender } from '../src/services/emailService.mjs'
 
 const runId = `${process.pid}-${Date.now()}`
 const testEmails = []
 const testTokenIds = []
+const testApplicationIds = []
 let server
 let baseUrl
 
@@ -30,6 +33,9 @@ before(async () => {
 })
 
 after(async () => {
+  if (testApplicationIds.length > 0) {
+    await Application.deleteMany({ _id: { $in: testApplicationIds } })
+  }
   if (testEmails.length > 0) {
     await User.deleteMany({ email: { $in: testEmails } })
   }
@@ -109,6 +115,147 @@ test('login issues a JWT for a provisioned account and /me returns the database 
   assert.equal(me.user.id, registration.user.id)
   assert.equal(me.user.role, 'APPLICANT')
   assert.equal('passwordHash' in me.user, false)
+})
+
+test('public status lookup returns only tracking details by email or Application ID without authenticating', async () => {
+  const email = `status-access-${runId}@example.test`
+  const registrationResponse = await register(email)
+  const registration = await registrationResponse.json()
+  const application = await Application.create({
+    applicantId: registration.user.id,
+    applicationType: 'Residence Certificate',
+    applicationData: {
+      title: 'Status access test',
+      applicantName: 'Test Applicant',
+      contactEmail: email,
+      details: 'Application ID login test.',
+    },
+    status: 'PROCESSING',
+    submittedAt: new Date(),
+  })
+  testApplicationIds.push(application._id)
+
+  const byEmail = await fetch(`${baseUrl}/api/application-status/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: email }),
+  })
+  const emailBody = await byEmail.json()
+  assert.equal(byEmail.status, 200)
+  assert.equal(emailBody.applications.length, 1)
+  assert.equal(emailBody.applications[0].id, String(application._id))
+  assert.equal(emailBody.applications[0].status, 'PROCESSING')
+  assert.equal('token' in emailBody, false)
+  assert.equal('user' in emailBody, false)
+  assert.equal('applicantName' in emailBody.applications[0], false)
+  assert.equal('contactEmail' in emailBody.applications[0], false)
+  assert.equal('details' in emailBody.applications[0], false)
+
+  const byApplicationId = await fetch(`${baseUrl}/api/application-status/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      identifier: String(application._id),
+    }),
+  })
+  const applicationBody = await byApplicationId.json()
+  assert.equal(byApplicationId.status, 200)
+  assert.equal(applicationBody.applications[0].id, String(application._id))
+  assert.equal('token' in applicationBody, false)
+
+  const otherEmail = `status-other-${runId}@example.test`
+  await register(otherEmail)
+  const noMatch = await fetch(`${baseUrl}/api/application-status/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: otherEmail }),
+  })
+  assert.equal(noMatch.status, 200)
+  assert.deepEqual((await noMatch.json()).applications, [])
+
+  const invalidInput = await fetch(`${baseUrl}/api/application-status/lookup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: 'not-an-email-or-id' }),
+  })
+  assert.equal(invalidInput.status, 400)
+})
+
+test('password reset delivers a short-lived one-time link and changes the applicant password', async () => {
+  const email = `password-reset-${runId}@example.test`
+  await register(email)
+  const sentMessages = []
+  configureOfficerEmailSender(async (message) => {
+    sentMessages.push(message)
+  })
+  try {
+    const requestResponse = await fetch(`${baseUrl}/api/auth/password-reset/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: email }),
+    })
+    const requestBody = await requestResponse.json()
+    assert.equal(requestResponse.status, 200)
+    assert.match(requestBody.message, /If an eligible account matches/)
+    assert.equal(sentMessages.length, 1)
+    assert.equal(sentMessages[0].to, email)
+    assert.equal(sentMessages[0].metadata.type, 'PASSWORD_RESET')
+
+    const user = await User.findOne({ email })
+      .select('+passwordResetTokenHash +passwordResetTokenExpiresAt')
+      .lean()
+    assert.ok(user.passwordResetTokenHash)
+    assert.ok(user.passwordResetTokenExpiresAt instanceof Date)
+    assert.equal(sentMessages[0].resetPath.includes(user.passwordResetTokenHash), false)
+    const resetToken = new URL(sentMessages[0].resetPath, 'http://localhost').searchParams.get('token')
+    assert.ok(resetToken)
+
+    const completeResponse = await fetch(`${baseUrl}/api/auth/password-reset/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: resetToken,
+        newPassword: 'ResetPassword456!',
+      }),
+    })
+    assert.equal(completeResponse.status, 200)
+    assert.match((await completeResponse.json()).message, /password has been reset/i)
+    assert.equal(await User.findOne({ email }).select('+passwordResetTokenHash').then((record) => record.passwordResetTokenHash), null)
+
+    const oldPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'TestPassword123!' }),
+    })
+    assert.equal(oldPasswordLogin.status, 401)
+    const newPasswordLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'ResetPassword456!' }),
+    })
+    assert.equal(newPasswordLogin.status, 200)
+
+    const unknownAccount = await fetch(`${baseUrl}/api/auth/password-reset/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier: `missing-${runId}@example.test` }),
+    })
+    assert.equal(unknownAccount.status, 200)
+    assert.equal((await unknownAccount.json()).message, requestBody.message)
+    assert.equal(sentMessages.length, 1)
+
+    const reusedToken = await fetch(`${baseUrl}/api/auth/password-reset/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: resetToken,
+        newPassword: 'ResetPassword789!',
+      }),
+    })
+    assert.equal(reusedToken.status, 400)
+  } finally {
+    configureOfficerEmailSender(null)
+  }
 })
 
 test('invalid credentials and unauthenticated or invalid tokens are rejected', async () => {

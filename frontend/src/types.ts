@@ -6,6 +6,7 @@ export type ApplicationStatus =
   | 'OFFICER_REVIEW'
   | 'ROUTED'
   | 'WAITING_FOR_OFFICER'
+  | 'WAITING_FOR_OFFICER_ASSIGNMENT'
   | 'ASSIGNED'
   | 'UNDER_REVIEW'
   | 'ESCALATED'
@@ -68,6 +69,8 @@ export interface ApplicationDeadline {
 
 export interface ApplicationDocument {
   id: string
+  applicationId?: string
+  applicationType?: string | null
   name: string
   status: string
   addedAt: string
@@ -127,9 +130,48 @@ export interface HumanVerificationApplicationDocument {
   ocrThreshold: number | null
   ocrStatus: OcrStatus
   humanVerificationReason?: string | null
+  ocrFailureCode?: string | null
   extractedText: string
   originalDocumentUrl: string
   submittedAt: string
+}
+
+export type VerificationReasonCode =
+  | 'OCR_LOW_CONFIDENCE'
+  | 'OCR_BELOW_MINIMUM_SAFE'
+  | 'OCR_PROCESSING_FAILED'
+  | 'AI_CLASSIFICATION_FAILED'
+  | 'UNKNOWN_DEPARTMENT'
+  | 'INVALID_AI_CLASSIFICATION'
+  | 'INSUFFICIENT_OCR_TEXT'
+  | 'CONFLICTING_CLASSIFICATIONS'
+  | 'LOW_CLASSIFICATION_CONFIDENCE'
+  | 'LOW_CONFIDENCE_AUTOMATION_UNSUPPORTED'
+  | 'CRITICAL_FIELDS_MISSING'
+  | 'CRITICAL_FIELDS_UNCERTAIN'
+  | 'CRITICAL_FIELD_EVIDENCE_UNSUPPORTED'
+  | 'DOCUMENT_INCONSISTENT'
+  | 'AI_DOCUMENT_QUALITY_LOW'
+  | 'INSUFFICIENT_FIELDS'
+
+export interface VerificationReason {
+  code: VerificationReasonCode
+  message: string
+  action: string
+  documentId: string
+  documentName: string
+  ocrStatus: OcrStatus | null
+  ocrConfidence: number | null
+  threshold: number | null
+  failureCode?: string | null
+  failureDescription?: string | null
+  predictedDocumentType?: string | null
+  predictedDepartment?: string | null
+  classificationConfidence?: number | null
+  fieldNames?: string[]
+  qualityScore?: number | null
+  fieldCompleteness?: number | null
+  ocrNoiseScore?: number | null
 }
 
 export interface HumanVerificationApplication {
@@ -141,6 +183,7 @@ export interface HumanVerificationApplication {
   status: ApplicationStatus
   humanVerificationStatus: 'PENDING' | 'IN_REVIEW' | 'PASSED' | 'REJECTED'
   reason: string | null
+  verificationReasons: VerificationReason[]
   submittedAt: string | null
   documentCount: number
   ocrScore: number | null
@@ -193,7 +236,18 @@ export interface ApplicationRecord {
   contactEmail: string
   details: string
   status: ApplicationStatus
+  rejectionReason?: string | null
+  rejectedAt?: string | null
+  processingDecision?: 'AUTO_PROCESSED' | 'HUMAN_VERIFICATION' | null
+  automationAssessment?: {
+    requiredFieldCount: number
+    completeFieldCount: number
+    evidenceSupportedFieldCount: number
+    confidenceQualifiedFieldCount: number
+  } | null
   department: string | null
+  assignedOfficerId?: string | null
+  assignedOfficerName?: string | null
   deadlineAt: ApplicationDeadline['deadlineAt']
   breachedAt: ApplicationDeadline['breachedAt']
   documents: ApplicationDocument[]

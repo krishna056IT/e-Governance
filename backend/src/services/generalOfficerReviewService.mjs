@@ -1,6 +1,9 @@
 import mongoose from 'mongoose'
 import Application from '../models/Application.mjs'
+import Document from '../models/Document.mjs'
 import User from '../models/User.mjs'
+import { listApplicantApplications } from './applicationService.mjs'
+import { readExtractedText } from './documentStorage.mjs'
 import { recordApplicationStatusTransition } from './applicationLifecycleService.mjs'
 import { getReviewDocuments, serializeOfficerApplication } from './officerReviewService.mjs'
 
@@ -55,6 +58,55 @@ export async function listEscalatedApplications() {
     .sort({ updatedAt: -1, _id: -1 })
     .lean()
   return Promise.all(applications.map((application) => serializeGeneralOfficerApplication(application)))
+}
+
+async function filterApplicationsBySearch(applications, search) {
+  const query = typeof search === 'string' ? search.trim().toLocaleLowerCase() : ''
+  if (!query) return applications
+  if (query.length > 160) throw requestError('Search text must be 160 characters or fewer.', 400)
+
+  const metadataMatches = new Set(
+    applications
+      .filter((application) => [
+        application.id,
+        application.applicationType,
+        application.title,
+        application.applicantName,
+      ].some((value) => String(value || '').toLocaleLowerCase().includes(query)))
+      .map(({ id }) => id),
+  )
+  const remainingIds = applications
+    .map(({ id }) => id)
+    .filter((id) => !metadataMatches.has(id))
+  if (!remainingIds.length) {
+    return applications.filter(({ id }) => metadataMatches.has(id))
+  }
+
+  const documents = await Document.find({
+    applicationId: { $in: remainingIds },
+    extractedTextStorageId: { $type: 'string' },
+  }).select('+extractedTextStorageId applicationId').lean()
+  const ocrMatches = new Set()
+  for (const document of documents) {
+    const extractedText = await readExtractedText(document.extractedTextStorageId)
+    if (extractedText.toLocaleLowerCase().includes(query)) {
+      ocrMatches.add(String(document.applicationId))
+    }
+  }
+  return applications.filter(({ id }) => metadataMatches.has(id) || ocrMatches.has(id))
+}
+
+export async function listGeneralOfficerDashboardApplications(generalOfficerId, search = '') {
+  if (!mongoose.isValidObjectId(generalOfficerId)) {
+    throw requestError('Authenticated General Officer identity is invalid.', 401)
+  }
+  if (typeof search !== 'string') {
+    throw requestError('Search text must be a string.', 400)
+  }
+  const submissions = await listApplicantApplications(generalOfficerId)
+  return {
+    submissions: await filterApplicationsBySearch(submissions, search),
+  }
 }
 
 export async function getEscalatedApplication(applicationId) {

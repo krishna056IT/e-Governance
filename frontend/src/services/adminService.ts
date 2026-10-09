@@ -1,4 +1,5 @@
 import type { DepartmentRecord, OfficerRegistrationRecord, UserRecord } from '../types'
+import type { AdminOverview } from '../types/admin'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -52,12 +53,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const adminService = {
   async getOverview() {
-    return request<{
-      applicationCount: number
-      departmentCount: number
-      userCount: number
-      activeAdminCount: number
-    }>('/admin/overview')
+    return request<AdminOverview>('/admin/overview')
   },
 
   async listDepartments() {
@@ -87,6 +83,14 @@ export const adminService = {
       user: OfficerRegistrationRecord
       setupExpiresAt: string
     }>(`/admin/officer-registrations/${userId}/approve`, { method: 'POST' })
+  },
+
+  async reissueOfficerPasswordSetup(userId: string) {
+    return request<{
+      message: string
+      setupExpiresAt: string
+      setupPath?: string
+    }>(`/admin/officer-registrations/${userId}/reissue-setup`, { method: 'POST' })
   },
 
   async rejectOfficerRegistration(userId: string, reason: string) {

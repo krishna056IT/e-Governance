@@ -303,7 +303,10 @@ export function AdminDashboardPage() {
   }
 
   async function approveOfficer(registration: OfficerRegistrationRecord) {
-    if (!window.confirm(`Approve ${registration.displayName} (${registration.governmentOfficerId})? The officer can then set a password from their Officer Dashboard.`)) return
+    const roleName = registration.role === 'GENERAL_OFFICER'
+      ? 'General Officer'
+      : registration.role === 'HUMAN_VERIFIER' ? 'Human Verifier' : 'Officer'
+    if (!window.confirm(`Approve ${registration.displayName} (${registration.governmentOfficerId || registration.email})? The ${roleName} will receive a one-time password setup link.`)) return
     setPendingActionId(registration.id)
     setActionMessage('')
     setActionMessageIsError(false)
@@ -314,6 +317,26 @@ export function AdminDashboardPage() {
     } catch (reason) {
       setActionMessage(reason instanceof Error ? reason.message : 'Unable to approve Officer registration.')
       setActionMessageIsError(true)
+    } finally {
+      setPendingActionId(null)
+    }
+  }
+
+  async function reissueOfficerSetup(registration: OfficerRegistrationRecord) {
+    if (!window.confirm(`Issue a new one-time password setup link for ${registration.displayName}? The previous setup link will stop working.`)) {
+      return null
+    }
+    setPendingActionId(registration.id)
+    setActionMessage('')
+    setActionMessageIsError(false)
+    try {
+      const result = await adminService.reissueOfficerPasswordSetup(registration.id)
+      setActionMessage(result.message)
+      return result
+    } catch (reason) {
+      setActionMessage(reason instanceof Error ? reason.message : 'Unable to reissue the Officer password setup link.')
+      setActionMessageIsError(true)
+      throw reason
     } finally {
       setPendingActionId(null)
     }
@@ -377,7 +400,7 @@ export function AdminDashboardPage() {
 
   return (
     <AdminLayout section={section} {...searchProps}>
-      <PageHeader eyebrow={page.eyebrow} title={page.title} description={page.description} />
+      {section !== 'dashboard' && <PageHeader eyebrow={page.eyebrow} title={page.title} description={page.description} />}
       {loading ? <AdminPageLoading /> : error ? (
         <ErrorState message={error} onRetry={() => void load()} />
       ) : (
@@ -473,6 +496,7 @@ export function AdminDashboardPage() {
               pendingActionId={pendingActionId}
               onView={viewOfficerRegistration}
               onApprove={(registration) => void approveOfficer(registration)}
+              onReissueSetup={reissueOfficerSetup}
               onReject={(registration) => void rejectOfficer(registration)}
               onClearSearch={() => setSearch('')}
             />

@@ -20,8 +20,8 @@ const seedApplications: ApplicationRecord[] = [
     deadlineAt: dateFromNow(2),
     breachedAt: null,
     documents: [
-      { id: 'DOC-1', name: 'residence-proof.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
-      { id: 'DOC-2', name: 'supporting-record.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-1', applicationId: 'APP-1048', applicationType: 'Residence document request', name: 'residence-proof.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-2', applicationId: 'APP-1048', applicationType: 'Residence document request', name: 'supporting-record.pdf', status: 'Submitted', addedAt: dateFromNow(-2), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
     ],
     timeline: [
       { id: 'EV-1', label: 'Application submitted', at: dateFromNow(-2) },
@@ -44,7 +44,7 @@ const seedApplications: ApplicationRecord[] = [
     deadlineAt: dateFromNow(-1),
     breachedAt: dateFromNow(0),
     documents: [
-      { id: 'DOC-3', name: 'property-record.pdf', status: 'Submitted', addedAt: dateFromNow(-6), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
+      { id: 'DOC-3', applicationId: 'APP-1042', applicationType: 'Property record update', name: 'property-record.pdf', status: 'Submitted', addedAt: dateFromNow(-6), mimeType: 'application/pdf', fileSize: 1024, ocrConfidence: null, ocrThreshold: null, humanVerificationRequired: false, humanVerificationStatus: null },
     ],
     timeline: [
       { id: 'EV-4', label: 'Application submitted', at: dateFromNow(-6) },
@@ -64,7 +64,7 @@ const seedApplications: ApplicationRecord[] = [
     applicantName: 'Nila Sen',
     contactEmail: 'nila@example.test',
     details: 'Application awaiting assignment to an eligible Officer in the assigned department.',
-    status: 'WAITING_FOR_OFFICER',
+    status: 'WAITING_FOR_OFFICER_ASSIGNMENT',
     department: 'Public Services Department',
     deadlineAt: null,
     breachedAt: null,

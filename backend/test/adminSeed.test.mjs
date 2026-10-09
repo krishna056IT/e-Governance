@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
-import { ensureDevelopmentAdmin } from '../src/services/adminSeedService.mjs'
+import { ensureDevelopmentAdmin, resetDevelopmentAdminPassword } from '../src/services/adminSeedService.mjs'
 
 const adminPermissions = [
   'ORG_OVERVIEW',
@@ -34,7 +34,9 @@ function createUserModel(initialUsers = []) {
     },
     async updateOne(filter, update) {
       const user = users.find((candidate) =>
-        candidate._id === filter._id && candidate.role === filter.role,
+        candidate._id === filter._id &&
+        candidate.role === filter.role &&
+        (!filter.email || candidate.email === filter.email),
       )
       if (!user) return { matchedCount: 0 }
       Object.assign(user, update.$set)
@@ -71,7 +73,56 @@ test('development seed creates exactly one bcrypt-protected Admin', async () => 
   assert.equal(await bcrypt.compare('LocalDevelopmentPassword!', UserModel.users[0].passwordHash), true)
 })
 
-test('re-running the seed updates the canonical Admin without leaving duplicates', async () => {
+test('explicit password reset updates only the exact existing Admin account', async () => {
+  const UserModel = createUserModel([
+    { _id: 'admin-1', email: 'admin@example.com', role: 'ADMIN', passwordHash: 'old-hash', isActive: true },
+    { _id: 'applicant-1', email: 'person@example.com', role: 'APPLICANT', passwordHash: 'applicant-hash' },
+  ])
+  const result = await resetDevelopmentAdminPassword({
+    email: ' ADMIN@example.com ',
+    password: 'NewAdminPassword!',
+    nodeEnv: 'development',
+    UserModel,
+  })
+
+  assert.equal(result.reset, true)
+  assert.equal(UserModel.users[0].email, 'admin@example.com')
+  assert.notEqual(UserModel.users[0].passwordHash, 'NewAdminPassword!')
+  assert.equal(await bcrypt.compare('NewAdminPassword!', UserModel.users[0].passwordHash), true)
+  assert.equal(UserModel.users[1].passwordHash, 'applicant-hash')
+})
+
+test('explicit password reset refuses missing or duplicate Admin targets without changing data', async () => {
+  const missingModel = createUserModel([{ _id: 'admin-1', email: 'other@example.com', role: 'ADMIN', passwordHash: 'old-hash' }])
+  await assert.rejects(
+    () => resetDevelopmentAdminPassword({
+      email: 'admin@example.com',
+      password: 'NewAdminPassword!',
+      nodeEnv: 'development',
+      UserModel: missingModel,
+    }),
+    /does not match an existing Admin/,
+  )
+  assert.equal(missingModel.users[0].passwordHash, 'old-hash')
+
+  const duplicateModel = createUserModel([
+    { _id: 'admin-1', email: 'admin@example.com', role: 'ADMIN', passwordHash: 'old-hash-1' },
+    { _id: 'admin-2', email: 'admin@example.com', role: 'ADMIN', passwordHash: 'old-hash-2' },
+  ])
+  await assert.rejects(
+    () => resetDevelopmentAdminPassword({
+      email: 'admin@example.com',
+      password: 'NewAdminPassword!',
+      nodeEnv: 'development',
+      UserModel: duplicateModel,
+    }),
+    /matches multiple Admin/,
+  )
+  assert.equal(duplicateModel.users[0].passwordHash, 'old-hash-1')
+  assert.equal(duplicateModel.users[1].passwordHash, 'old-hash-2')
+})
+
+test('re-running the seed preserves the canonical Admin without leaving duplicates', async () => {
   const UserModel = createUserModel([
     { _id: 'admin-1', email: 'admin@example.com', displayName: 'Existing Admin', role: 'ADMIN', permissions: [], isActive: false, passwordHash: 'old-hash' },
     { _id: 'admin-2', email: 'second@example.com', displayName: 'Duplicate Admin', role: 'ADMIN', permissions: ['OLD'], isActive: true, passwordHash: 'duplicate-hash' },
@@ -93,7 +144,31 @@ test('re-running the seed updates the canonical Admin without leaving duplicates
   assert.equal(UserModel.users[0].role, 'ADMIN')
   assert.equal(UserModel.users[0].isActive, true)
   assert.deepEqual(UserModel.users[0].permissions, adminPermissions)
-  assert.equal(await bcrypt.compare('NewLocalDevelopmentPassword!', UserModel.users[0].passwordHash), true)
+  assert.equal(UserModel.users[0].passwordHash, 'old-hash')
+})
+
+test('re-running the seed preserves the existing configured Admin password hash', async () => {
+  const existingPassword = 'ExistingAdminPassword!'
+  const UserModel = createUserModel([
+    {
+      _id: 'admin-1',
+      email: 'admin@example.com',
+      displayName: 'Existing Admin',
+      role: 'ADMIN',
+      permissions: [],
+      isActive: false,
+      passwordHash: await bcrypt.hash(existingPassword, 10),
+    },
+  ])
+
+  await ensureDevelopmentAdmin({
+    email: 'admin@example.com',
+    password: existingPassword,
+    nodeEnv: 'development',
+    UserModel,
+  })
+
+  assert.equal(await bcrypt.compare(existingPassword, UserModel.users[0].passwordHash), true)
 })
 
 test('seed converts the first existing Admin to the configured canonical admin instead of creating a second duplicate', async () => {
@@ -115,7 +190,7 @@ test('seed converts the first existing Admin to the configured canonical admin i
   assert.equal(result.finalAdminCount, 1)
   assert.equal(UserModel.users[0].email, 'admin@example.com')
   assert.equal(UserModel.users[0].role, 'ADMIN')
-  assert.equal(await bcrypt.compare('CanonicalAdminPassword!', UserModel.users[0].passwordHash), true)
+  assert.equal(UserModel.users[0].passwordHash, 'old-hash')
 })
 
 test('seed refuses to assign the configured email to a non-admin account and rejects invalid configuration', async () => {

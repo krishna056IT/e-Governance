@@ -96,7 +96,7 @@ before(async () => {
 
   const alreadyAssigned = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
+    applicationType: `Residence certificate workload ${runId}`,
     applicationData: {
       title: 'Already assigned workload',
       applicantName: 'Applicant',
@@ -148,7 +148,7 @@ async function createHumanVerificationApplication(title) {
   const applicant = users[1]
   const application = await Application.create({
     applicantId: applicant._id,
-    applicationType: 'Residence certificate',
+    applicationType: `Residence certificate ${title}`,
     applicationData: {
       title,
       applicantName: applicant.displayName,
@@ -184,7 +184,7 @@ test('failed OCR submissions enter application Human Verification and flag their
   const draftResponse = await request('/api/applications', applicantToken, {
     method: 'POST',
     body: JSON.stringify({
-      applicationType: 'Residence certificate',
+      applicationType: `Failed OCR certificate ${runId}`,
       title: 'Failed OCR application',
       applicantName: applicant.displayName,
       contactEmail: applicant.email,
@@ -203,10 +203,35 @@ test('failed OCR submissions enter application Human Verification and flag their
     fileSize: 1,
     originalStorageId: `failed-ocr-test-${draft.id}`,
     ocrStatus: 'FAILED',
+    ocrFailureCode: 'OCR_PROCESSING_FAILED',
+  })
+  const lowConfidenceDocument = await Document.create({
+    applicationId: draft.id,
+    applicantId: applicant._id,
+    originalFilename: 'income-certificate.png',
+    documentType: 'Income certificate',
+    mimeType: 'image/png',
+    fileSize: 1,
+    originalStorageId: `low-confidence-test-${draft.id}`,
+    ocrStatus: 'LOW_CONFIDENCE',
+    ocrConfidence: 74,
+    ocrThreshold: 90,
+  })
+  const emptyTextDocument = await Document.create({
+    applicationId: draft.id,
+    applicantId: applicant._id,
+    originalFilename: 'blank-scan.png',
+    documentType: 'Scanned record',
+    mimeType: 'image/png',
+    fileSize: 1,
+    originalStorageId: `empty-text-test-${draft.id}`,
+    ocrStatus: 'COMPLETED',
+    ocrConfidence: 96,
+    ocrThreshold: 90,
   })
 
   const submitted = await request(`/api/applications/${draft.id}/submit`, applicantToken, { method: 'POST' })
-  assert.equal(submitted.status, 200)
+  assert.equal(submitted.status, 200, await submitted.clone().text())
   const submission = (await submitted.json()).application
   assert.equal(submission.status, 'HUMAN_VERIFICATION')
 
@@ -215,10 +240,39 @@ test('failed OCR submissions enter application Human Verification and flag their
   const storedDocument = await Document.findById(document._id).lean()
   assert.equal(storedDocument.humanVerificationRequired, true)
   assert.equal(storedDocument.humanVerificationStatus, 'PENDING')
+  assert.equal((await Document.findById(lowConfidenceDocument._id).lean()).humanVerificationRequired, true)
+  assert.equal((await Document.findById(emptyTextDocument._id).lean()).humanVerificationRequired, true)
+  assert.deepEqual(
+    storedApplication.verificationReasons.map(({ code, documentName }) => [code, documentName]),
+    [
+      ['OCR_PROCESSING_FAILED', 'failed-ocr-document.png'],
+      ['OCR_LOW_CONFIDENCE', 'income-certificate.png'],
+      ['INSUFFICIENT_OCR_TEXT', 'blank-scan.png'],
+    ],
+  )
+  assert.equal(storedApplication.verificationReasons[0].failureCode, 'OCR_PROCESSING_FAILED')
+  assert.match(storedApplication.verificationReasons[0].failureDescription, /OCR processing failed/)
+  assert.equal(
+    storedApplication.verificationReasons[1].message,
+    'OCR confidence is below the required 90% threshold.',
+  )
+  assert.equal(storedApplication.verificationReasons[1].ocrConfidence, 74)
+  assert.equal(storedApplication.verificationReasons[1].threshold, 90)
+  assert.equal(
+    storedApplication.verificationReasons[2].message,
+    'OCR completed but insufficient text was extracted.',
+  )
 
   const queueResponse = await request('/api/human-verification/applications?status=PENDING', verifierToken)
   const queue = (await queueResponse.json()).queue
-  assert.ok(queue.some((item) => item.id === draft.id))
+  const queuedApplication = queue.find((item) => item.id === draft.id)
+  assert.ok(queuedApplication)
+  assert.equal(queuedApplication.verificationReasons.length, 3)
+
+  const detailResponse = await request(`/api/human-verification/applications/${draft.id}`, verifierToken)
+  const detail = (await detailResponse.json()).application
+  assert.equal(detail.verificationReasons.length, 3)
+  assert.equal(detail.verificationReasons[1].documentName, 'income-certificate.png')
 })
 
 test('Human Verifier reviews whole applications and either routes or rejects them safely', async () => {

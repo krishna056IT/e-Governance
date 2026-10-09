@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 
+import { env } from '../config/env.mjs'
 import Department from '../models/Department.mjs'
 import GovernmentOfficerRegistry from '../models/GovernmentOfficerRegistry.mjs'
 import User from '../models/User.mjs'
@@ -39,7 +40,11 @@ function validateRegistration({ governmentOfficerId, displayName, email }) {
   return { normalizedGovernmentOfficerId, normalizedDisplayName, normalizedEmail }
 }
 
-export async function validateOfficerRegistration({ governmentOfficerId }) {
+export async function validateOfficerRegistration({ governmentOfficerId, role = 'OFFICER' }) {
+  const normalizedRole = String(role).toUpperCase()
+  if (!['OFFICER', 'GENERAL_OFFICER'].includes(normalizedRole)) {
+    throw requestError('Choose a supported registration type.', 400)
+  }
   const input = validateRegistration({ governmentOfficerId })
   const registryEntry = await GovernmentOfficerRegistry.findOne({
     governmentOfficerId: input.normalizedGovernmentOfficerId,
@@ -55,14 +60,14 @@ export async function validateOfficerRegistration({ governmentOfficerId }) {
     governmentOfficerId: input.normalizedGovernmentOfficerId,
   }).lean()
   if (existingOfficer) {
-    if (existingOfficer.role !== 'OFFICER') {
+    if (existingOfficer.role !== normalizedRole) {
       throw requestError('This Government Officer ID is already associated with an account.', 409)
     }
     if (existingOfficer.accountStatus === 'PENDING') {
       throw requestError('Your registration is already awaiting administrator approval.', 409)
     }
     if (existingOfficer.accountStatus === 'ACTIVE' || !existingOfficer.accountStatus && existingOfficer.isActive) {
-      throw requestError('This officer already has an account.', 409)
+      throw requestError(`This ${normalizedRole === 'GENERAL_OFFICER' ? 'General Officer' : 'officer'} already has an account.`, 409)
     }
     if (existingOfficer.accountStatus === 'SUSPENDED' ||
         (!existingOfficer.accountStatus && !existingOfficer.isActive)) {
@@ -82,7 +87,11 @@ export async function validateOfficerRegistration({ governmentOfficerId }) {
   }
 }
 
-export async function registerOfficer({ governmentOfficerId, displayName, email }) {
+export async function registerOfficer({ governmentOfficerId, displayName, email, role = 'OFFICER' }) {
+  const normalizedRole = String(role).toUpperCase()
+  if (!['OFFICER', 'GENERAL_OFFICER'].includes(normalizedRole)) {
+    throw requestError('Choose a supported registration type.', 400)
+  }
   const input = validateRegistration({ governmentOfficerId, displayName, email })
   const registryEntry = await GovernmentOfficerRegistry.findOne({
     governmentOfficerId: input.normalizedGovernmentOfficerId,
@@ -114,14 +123,14 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
     governmentOfficerId: input.normalizedGovernmentOfficerId,
   }).select('+setupTokenHash +setupTokenExpiresAt').lean()
   if (existingOfficer) {
-    if (existingOfficer.role !== 'OFFICER') {
+    if (existingOfficer.role !== normalizedRole) {
       throw requestError('This Government Officer ID is already associated with an account.', 409)
     }
     if (existingOfficer.accountStatus === 'PENDING') {
       throw requestError('Your registration is already awaiting administrator approval.', 409)
     }
     if (existingOfficer.accountStatus === 'ACTIVE' || !existingOfficer.accountStatus && existingOfficer.isActive) {
-      throw requestError('This officer already has an account.', 409)
+      throw requestError(`This ${normalizedRole === 'GENERAL_OFFICER' ? 'General Officer' : 'officer'} already has an account.`, 409)
     }
     if (existingOfficer.accountStatus === 'SUSPENDED' ||
         (!existingOfficer.accountStatus && !existingOfficer.isActive)) {
@@ -138,7 +147,7 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
     if (emailOwner) throw requestError('This official email is already associated with another account.', 409)
 
     const reactivated = await User.findOneAndUpdate(
-      { _id: existingOfficer._id, accountStatus: 'REJECTED' },
+      { _id: existingOfficer._id, role: normalizedRole, accountStatus: 'REJECTED' },
       {
         $set: {
           email: registeredEmail,
@@ -146,7 +155,7 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
           departmentId: String(department._id),
           accountStatus: 'PENDING',
           isActive: false,
-          permissions: ROLE_PERMISSIONS.OFFICER,
+          permissions: ROLE_PERMISSIONS[normalizedRole],
           officerRejectedAt: null,
           officerRejectedBy: null,
           officerRejectionReason: null,
@@ -181,10 +190,10 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
     const user = await User.create({
       email: registeredEmail,
       displayName: registryEntry.displayName,
-      role: 'OFFICER',
+      role: normalizedRole,
       departmentId: String(department._id),
       governmentOfficerId: input.normalizedGovernmentOfficerId,
-      permissions: ROLE_PERMISSIONS.OFFICER,
+      permissions: ROLE_PERMISSIONS[normalizedRole],
       accountStatus: 'PENDING',
       isActive: false,
       mustChangePassword: false,
@@ -192,10 +201,10 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
       registrationAccessTokenExpiresAt,
     })
     await createAuditEvent({
-      actor: { id: String(user._id), role: 'OFFICER' },
-      action: 'OFFICER_REGISTRATION_SUBMITTED',
+      actor: { id: String(user._id), role: normalizedRole },
+      action: `${normalizedRole}_REGISTRATION_SUBMITTED`,
       newStatus: 'PENDING',
-      reason: `Officer registration submitted for ${input.normalizedGovernmentOfficerId}.`,
+      reason: `${normalizedRole === 'GENERAL_OFFICER' ? 'General Officer' : 'Officer'} registration submitted for ${input.normalizedGovernmentOfficerId}.`,
     })
     return {
       user: serializeUser(user.toObject()),
@@ -213,7 +222,7 @@ export async function registerOfficer({ governmentOfficerId, displayName, email 
         ],
       }).select('accountStatus isActive').lean()
       if (duplicate?.accountStatus === 'PENDING') {
-        throw requestError('Officer registration is already pending Admin approval.', 409)
+        throw requestError('Registration is already pending Admin approval.', 409)
       }
       throw requestError('An account already exists for this email or Government Officer ID.', 409)
     }
@@ -316,7 +325,7 @@ export async function completeOfficerPasswordSetup({
   }
 
   const normalizedRole = String(role).toUpperCase()
-  if (!['OFFICER', 'HUMAN_VERIFIER'].includes(normalizedRole)) {
+  if (!['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'].includes(normalizedRole)) {
     throw requestError('This setup link is invalid or expired.', 400)
   }
   const now = new Date()
@@ -362,11 +371,11 @@ export async function getOfficerRegistrationStatus({
   registrationAccessToken,
 }) {
   const normalizedRole = String(role).toUpperCase()
-  if (!['OFFICER', 'HUMAN_VERIFIER'].includes(normalizedRole)) {
+  if (!['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'].includes(normalizedRole)) {
     throw requestError('Registration status is unavailable for this role.', 400)
   }
   let identifier
-  if (normalizedRole === 'OFFICER') {
+  if (normalizedRole === 'OFFICER' || normalizedRole === 'GENERAL_OFFICER') {
     const input = validateRegistration({ governmentOfficerId })
     const registryEntry = await GovernmentOfficerRegistry.findOne({
       governmentOfficerId: input.normalizedGovernmentOfficerId,
@@ -387,7 +396,7 @@ export async function getOfficerRegistrationStatus({
     .lean()
   if (!officer) {
     return {
-      ...(normalizedRole === 'OFFICER' ? { governmentOfficerId: identifier.governmentOfficerId } : { email: identifier.email }),
+      ...(normalizedRole === 'OFFICER' || normalizedRole === 'GENERAL_OFFICER' ? { governmentOfficerId: identifier.governmentOfficerId } : { email: identifier.email }),
       status: 'NOT_REGISTERED',
       passwordSetupAvailable: false,
     }
@@ -422,14 +431,16 @@ export async function getOfficerRegistrationStatus({
     officer.setupTokenExpiresAt > now,
   )
   return {
-    ...(normalizedRole === 'OFFICER' ? { governmentOfficerId: identifier.governmentOfficerId } : { email: identifier.email }),
+    ...(normalizedRole === 'OFFICER' || normalizedRole === 'GENERAL_OFFICER' ? { governmentOfficerId: identifier.governmentOfficerId } : { email: identifier.email }),
     status,
     passwordSetupAvailable,
     ...(passwordSetupAvailable
       ? {
         passwordSetupUrl: normalizedRole === 'OFFICER'
           ? `/officer/setup?registration=1&officerId=${encodeURIComponent(identifier.governmentOfficerId)}`
-          : `/human-verifier/setup?registration=1&email=${encodeURIComponent(identifier.email)}`,
+          : normalizedRole === 'GENERAL_OFFICER'
+            ? `/general-officer/setup?registration=1&officerId=${encodeURIComponent(identifier.governmentOfficerId)}`
+            : `/human-verifier/setup?registration=1&email=${encodeURIComponent(identifier.email)}`,
       }
       : {}),
     ...(ownsRegistration && officer.accountStatus === 'REJECTED' && officer.officerRejectionReason
@@ -453,10 +464,10 @@ export async function completeOfficerRegistrationPasswordSetup({
     throw requestError('Choose a password between 12 and 128 characters.', 400)
   }
   const normalizedRole = String(role).toUpperCase()
-  if (!['OFFICER', 'HUMAN_VERIFIER'].includes(normalizedRole)) {
+  if (!['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'].includes(normalizedRole)) {
     throw requestError('Password setup is unavailable for this role.', 403)
   }
-  const identifier = normalizedRole === 'OFFICER'
+  const identifier = normalizedRole === 'OFFICER' || normalizedRole === 'GENERAL_OFFICER'
     ? { governmentOfficerId: validateRegistration({ governmentOfficerId }).normalizedGovernmentOfficerId }
     : { email: normalizeEmail(email) }
   if (normalizedRole === 'HUMAN_VERIFIER' &&
@@ -554,7 +565,7 @@ export async function listOfficerRegistrations(status = 'ALL') {
   const normalizedStatus = String(status).toUpperCase()
   if (!statuses.has(normalizedStatus)) throw requestError('Invalid Officer registration status filter.', 400)
 
-  const filter = { role: { $in: ['OFFICER', 'HUMAN_VERIFIER'] } }
+  const filter = { role: { $in: ['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'] } }
   if (normalizedStatus !== 'ALL') {
     filter.accountStatus = normalizedStatus
   }
@@ -564,7 +575,7 @@ export async function listOfficerRegistrations(status = 'ALL') {
 
 export async function getOfficerRegistration(userId) {
   if (!mongoose.isValidObjectId(userId)) return null
-  const officer = await User.findOne({ _id: userId, role: { $in: ['OFFICER', 'HUMAN_VERIFIER'] } }).lean()
+  const officer = await User.findOne({ _id: userId, role: { $in: ['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'] } }).lean()
   return officer ? serializeUser(officer) : null
 }
 
@@ -572,11 +583,11 @@ export async function approveOfficerRegistration({ actor, userId }) {
   if (!actor?.id) throw requestError('An authenticated Admin is required.', 401)
   const officer = await User.findOne({
     _id: userId,
-    role: { $in: ['OFFICER', 'HUMAN_VERIFIER'] },
+    role: { $in: ['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'] },
     accountStatus: 'PENDING',
   }).lean()
   if (!officer) throw requestError('Pending Officer registration not found.', 404)
-  if (officer.role === 'OFFICER') {
+  if (officer.role === 'OFFICER' || officer.role === 'GENERAL_OFFICER') {
     const department = await Department.findOne({ _id: officer.departmentId, isActive: true }).lean()
     const registryEntry = await GovernmentOfficerRegistry.findOne({
       governmentOfficerId: officer.governmentOfficerId,
@@ -593,7 +604,9 @@ export async function approveOfficerRegistration({ actor, userId }) {
   const setupTokenExpiresAt = new Date(Date.now() + setupTokenLifetimeMs)
   const setupPath = officer.role === 'OFFICER'
     ? `/officer/setup?token=${encodeURIComponent(token)}&officerId=${encodeURIComponent(officer.governmentOfficerId)}`
-    : `/human-verifier/setup?token=${encodeURIComponent(token)}`
+    : officer.role === 'GENERAL_OFFICER'
+      ? `/general-officer/setup?token=${encodeURIComponent(token)}&officerId=${encodeURIComponent(officer.governmentOfficerId)}`
+      : `/human-verifier/setup?token=${encodeURIComponent(token)}`
   await sendOfficerSetupLink({
     email: officer.email,
     governmentOfficerId: officer.governmentOfficerId,
@@ -633,9 +646,88 @@ export async function approveOfficerRegistration({ actor, userId }) {
     success: true,
     message: officer.role === 'HUMAN_VERIFIER'
       ? 'Human Verifier registration approved successfully. The account can continue password setup.'
-      : 'Officer registration approved successfully. The officer can open their Officer Dashboard to continue password setup.',
+      : officer.role === 'GENERAL_OFFICER'
+        ? 'General Officer registration approved successfully. The account can continue password setup.'
+        : 'Officer registration approved successfully. The officer can open their Officer Dashboard to continue password setup.',
     user: serializeUser(updated),
     setupExpiresAt: setupTokenExpiresAt,
+  }
+}
+
+export async function reissueOfficerPasswordSetup({ actor, userId }) {
+  if (!actor?.id || actor.role !== 'ADMIN') {
+    throw requestError('An authenticated Admin is required.', 401)
+  }
+  if (!mongoose.isValidObjectId(userId)) {
+    throw requestError('Approved Officer account not found.', 404)
+  }
+
+  const officer = await User.findOne({
+    _id: userId,
+    role: { $in: ['OFFICER', 'GENERAL_OFFICER'] },
+    accountStatus: 'ACTIVE',
+    isActive: true,
+    mustChangePassword: true,
+  }).lean()
+  if (!officer) {
+    throw requestError('This staff account is not awaiting initial password setup.', 409)
+  }
+  const department = await Department.findOne({
+    _id: officer.departmentId,
+    isActive: true,
+  }).lean()
+  const registryEntry = await GovernmentOfficerRegistry.findOne({
+    governmentOfficerId: officer.governmentOfficerId,
+    departmentId: officer.departmentId,
+    isActive: true,
+  }).lean()
+  if (!department || !registryEntry) {
+    throw requestError('The Officer identity or Department is no longer active.', 409)
+  }
+
+  const setupToken = randomBytes(32).toString('base64url')
+  const setupTokenHash = hashSetupToken(setupToken)
+  const setupTokenExpiresAt = new Date(Date.now() + setupTokenLifetimeMs)
+  const setupPath = officer.role === 'GENERAL_OFFICER'
+    ? `/general-officer/setup?token=${encodeURIComponent(setupToken)}&officerId=${encodeURIComponent(officer.governmentOfficerId)}`
+    : `/officer/setup?token=${encodeURIComponent(setupToken)}&officerId=${encodeURIComponent(officer.governmentOfficerId)}`
+  const updated = await User.findOneAndUpdate(
+    {
+      _id: officer._id,
+      role: officer.role,
+      accountStatus: 'ACTIVE',
+      isActive: true,
+      mustChangePassword: true,
+      departmentId: officer.departmentId,
+    },
+    {
+      $set: { setupTokenHash, setupTokenExpiresAt },
+    },
+    { new: true, runValidators: true },
+  ).lean()
+  if (!updated) {
+    throw requestError('Officer setup state changed; refresh the registration and try again.', 409)
+  }
+
+  const delivery = await sendOfficerSetupLink({
+    email: officer.email,
+    governmentOfficerId: officer.governmentOfficerId,
+    role: officer.role,
+    setupPath,
+    expiresAt: setupTokenExpiresAt,
+  })
+  await createAuditEvent({
+    actor,
+    action: `${officer.role}_PASSWORD_SETUP_REISSUED`,
+    reason: `Reissued initial password setup for approved ${officer.role === 'GENERAL_OFFICER' ? 'General Officer' : 'Officer'} ${officer.governmentOfficerId}.`,
+  })
+
+  return {
+    message: `A new one-time password setup link has been issued to the ${officer.role === 'GENERAL_OFFICER' ? 'General Officer' : 'Officer'}.`,
+    setupExpiresAt: setupTokenExpiresAt,
+    ...(env.NODE_ENV === 'development' && delivery.setupPath
+      ? { setupPath: delivery.setupPath }
+      : {}),
   }
 }
 
@@ -646,7 +738,7 @@ export async function rejectOfficerRegistration({ actor, userId, reason }) {
   }
   const currentRegistration = await User.findOne({
     _id: userId,
-    role: { $in: ['OFFICER', 'HUMAN_VERIFIER'] },
+    role: { $in: ['OFFICER', 'HUMAN_VERIFIER', 'GENERAL_OFFICER'] },
     accountStatus: 'PENDING',
   }).select('_id role governmentOfficerId email').lean()
   if (!currentRegistration) throw requestError('Pending Officer registration not found.', 404)

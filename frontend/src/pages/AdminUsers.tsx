@@ -1,4 +1,5 @@
 import type { Dispatch, FormEvent, SetStateAction } from 'react'
+import { Link } from 'react-router-dom'
 import { EmptyState } from '../components/ui'
 import { AdminStatus, AdminTable } from '../components/admin/AdminPrimitives'
 import type { DepartmentRecord, UserRecord } from '../types'
@@ -115,31 +116,21 @@ export function AdminUsers({
         <div className="admin-panel__heading">
           <div>
             <p className="admin-eyebrow">{editingUser ? 'UPDATE RECORD' : 'NEW RECORD'}</p>
-            <h2>{editingUser ? `Edit ${editingUser.displayName}` : 'Create staff account'}</h2>
-            <p>Government Officers must register themselves and receive Admin approval. Create General Officer or Human Verifier accounts here.</p>
+            <h2>{editingUser ? `Edit ${editingUser.displayName}` : 'Staff account provisioning'}</h2>
+            <p>Government Officers and General Officers must register and receive Admin approval before account setup.</p>
           </div>
         </div>
-        <form onSubmit={onSubmit} className="admin-form admin-form--grid">
-          {!editingUser && <>
-            <label className="admin-field" htmlFor="staffName"><span>Display name</span>
-              <input id="staffName" type="text" required value={staffForm.displayName}
-                onChange={(event) => onFormChange({ ...staffForm, displayName: event.target.value })} />
-            </label>
-            <label className="admin-field" htmlFor="staffEmail"><span>Email address</span>
-              <input id="staffEmail" type="email" required value={staffForm.email}
-                onChange={(event) => onFormChange({ ...staffForm, email: event.target.value })} />
-            </label>
-            <label className="admin-field" htmlFor="staffPassword"><span>Initial password</span>
-              <input id="staffPassword" type="password" minLength={8} required value={staffForm.password}
-                onChange={(event) => onFormChange({ ...staffForm, password: event.target.value })} />
-            </label>
-          </>}
+        {!editingUser ? (
+          <p className="admin-form-message">
+            Review pending staff requests in <Link to="/admin?section=officer-registrations">Officer registrations</Link>.
+          </p>
+        ) : <form onSubmit={onSubmit} className="admin-form admin-form--grid">
           <label className="admin-field" htmlFor="staffRole"><span>Staff role</span>
             <select id="staffRole" value={staffForm.role}
               onChange={(event) => onFormChange({ ...staffForm, role: event.target.value as StaffRole })}>
-              {editingUser?.role === 'OFFICER' && <option value="OFFICER">Officer</option>}
+              {editingUser.role === 'OFFICER' && <option value="OFFICER">Officer</option>}
               <option value="GENERAL_OFFICER">General Officer</option>
-              {editingUser?.role === 'HUMAN_VERIFIER' && <option value="HUMAN_VERIFIER">Human Verifier</option>}
+              {editingUser.role === 'HUMAN_VERIFIER' && <option value="HUMAN_VERIFIER">Human Verifier</option>}
             </select>
           </label>
           <label className="admin-field" htmlFor="staffDepartmentId"><span>Department</span>
@@ -155,13 +146,13 @@ export function AdminUsers({
               onChange={(event) => onFormChange({ ...staffForm, governmentOfficerId: event.target.value })} />
           </label>
           <div className="admin-form__actions admin-form__actions--wide">
-            <button className="button button--primary" type="submit" disabled={staffSaving || (!editingUser && !activeDepartments.length)}>
-              {staffSaving ? 'Saving…' : editingUser ? 'Save staff account' : 'Create staff account'}
+            <button className="button button--primary" type="submit" disabled={staffSaving}>
+              {staffSaving ? 'Saving…' : 'Save staff account'}
             </button>
             {editingUser && <button className="button button--secondary" type="button" onClick={onCancelEdit}>Cancel</button>}
           </div>
           {staffMessage && <p className={`admin-form-message admin-form-message--wide${staffMessageIsError ? ' admin-form-message--error' : ''}`} role={staffMessageIsError ? 'alert' : 'status'}>{staffMessage}</p>}
-        </form>
+        </form>}
       </section>
     </>
   )

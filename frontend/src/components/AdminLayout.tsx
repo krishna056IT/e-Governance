@@ -8,7 +8,6 @@ export type AdminSection = 'dashboard' | 'departments' | 'officers' | 'officer-r
 const navigation: { id: AdminSection; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '◫' },
   { id: 'departments', label: 'Departments', icon: '⌂' },
-  { id: 'officers', label: 'Officers & users', icon: '♙' },
   { id: 'officer-registrations', label: 'Officer registrations', icon: '✓' },
 ]
 

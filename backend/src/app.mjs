@@ -3,10 +3,12 @@ import { env } from './config/env.mjs'
 import adminRoutes from './routes/admin.mjs'
 import authRoutes from './routes/auth.mjs'
 import applicationsRoutes from './routes/applications.mjs'
+import applicationStatusRoutes from './routes/applicationStatus.mjs'
 import documentsRoutes from './routes/documents.mjs'
 import officerRoutes from './routes/officer.mjs'
 import generalOfficerRoutes from './routes/generalOfficer.mjs'
 import verificationRoutes from './routes/verification.mjs'
+import chatRoutes from './routes/chat.mjs'
 
 const app = express()
 
@@ -26,10 +28,12 @@ app.get('/health', (_req, res) => {
 app.use('/api/admin', adminRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/applications', applicationsRoutes)
+app.use('/api/application-status', applicationStatusRoutes)
 app.use('/api/documents', documentsRoutes)
 app.use('/api/officer', officerRoutes)
 app.use('/api/general-officer', generalOfficerRoutes)
 app.use('/api/human-verification', verificationRoutes)
+app.use('/api/chat', chatRoutes)
 
 app.use((err, _req, res, _next) => {
   const isDatabaseError = err?.name?.startsWith('Mongo') || err?.name?.startsWith('Mongoose')

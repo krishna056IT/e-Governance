@@ -185,11 +185,11 @@ before production behavior is fixed.
 - Eligible-Officer selection restricted to the routed Department.
 - Pending count includes exactly `ASSIGNED` and `UNDER_REVIEW`.
 - Least-pending selection with fair deterministic tie-break:
-  oldest `lastAssignedAt` first (never-assigned first), then stable
-  government Officer ID.
-- Atomic/concurrency-safe count and assignment, idempotent retry, and
-  prevention of duplicate active assignments.
-- `WAITING_FOR_OFFICER` queue when no eligible Officer is available.
+  oldest most-recent assignment timestamp across application history
+  first (never-assigned first), then stable User ID.
+- Department-scoped database lease serialization for concurrency-safe
+  workload counts and assignment persistence.
+- `WAITING_FOR_OFFICER_ASSIGNMENT` when no eligible Officer is available.
 - Assignment history and audit events.
 
 ## Officer Review workflow (implemented)

@@ -14,10 +14,25 @@ interface ApplicationsResponse {
   applications: ApplicationRecord[]
 }
 
+interface DashboardResponse {
+  submissions: ApplicationRecord[]
+}
+
+interface SubmissionResponse {
+  application: ApplicationRecord
+  receipt: {
+    applicationType: string
+    applicationId: string
+    applicantName: string
+  }
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('authToken')
   const headers = new Headers(options.headers)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers })
@@ -33,6 +48,27 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const generalOfficerReviewService = {
+  async getDashboard(search = ''): Promise<DashboardResponse> {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('search', search.trim())
+    const query = params.toString()
+    return request<DashboardResponse>(`/general-officer/dashboard${query ? `?${query}` : ''}`)
+  },
+
+  async submitApplication(form: FormData): Promise<SubmissionResponse> {
+    return request<SubmissionResponse>('/general-officer/submissions', {
+      method: 'POST',
+      body: form,
+    })
+  },
+
+  async getSubmission(id: string): Promise<ApplicationRecord> {
+    const response = await request<ApplicationResponse>(
+      `/general-officer/submissions/${encodeURIComponent(id)}`,
+    )
+    return response.application
+  },
+
   async listEscalated(): Promise<ApplicationRecord[]> {
     const response = await request<ApplicationsResponse>('/general-officer/applications')
     return response.applications

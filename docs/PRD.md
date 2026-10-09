@@ -214,7 +214,7 @@ Applicant registration with email and password
 The application lifecycle vocabulary is:
 
 `DRAFT`, `SUBMITTED`, `PROCESSING`, `OFFICER_REVIEW`, `ROUTED`, `WAITING_FOR_OFFICER`,
-`ASSIGNED`, `UNDER_REVIEW`, `ESCALATED`, `GENERAL_OFFICER_REVIEW`,
+`WAITING_FOR_OFFICER_ASSIGNMENT`, `ASSIGNED`, `UNDER_REVIEW`, `ESCALATED`, `GENERAL_OFFICER_REVIEW`,
 `CORRECTION_REQUIRED`, `RESUBMITTED`, `APPROVED`, and `REJECTED`.
 
 An Officer's adverse or uncertain finding results in `ESCALATED`; it
@@ -245,15 +245,15 @@ After Department routing, the backend selects an eligible Officer only
 from that Department, choosing the Officer with the fewest pending
 applications. For this purpose, pending workload includes exactly
 `ASSIGNED` and `UNDER_REVIEW`; all other application states are excluded.
-For equal counts, choose the Officer with the oldest `lastAssignedAt`
-first (an Officer never assigned sorts first), then government Officer
-ID in ascending stable order.
+For equal counts, choose the Officer whose most recent assignment across
+application history is oldest first (an Officer never assigned sorts
+first), then stable User ID in ascending order.
 
-Counting and assignment must be atomic and concurrency-safe, with no
-duplicate active assignment. If no eligible Officer is available, the
-application enters `WAITING_FOR_OFFICER`. It must never be silently
-assigned to a different Department. `ARCHITECTURE.md` defines the
-operational details.
+Counting and assignment are serialized by a Department-scoped database
+lease lock, with the application eligibility checked again under the
+lock. If no eligible Officer is available, the application enters
+`WAITING_FOR_OFFICER_ASSIGNMENT`. It must never be silently assigned to a
+different Department. `ARCHITECTURE.md` defines the operational details.
 
 ## 8. OCR, Verification, Routing, and Assignment Boundaries
 
@@ -283,19 +283,41 @@ and authorized results; it must not implement any of these decisions.
 OCR confidence measures extraction reliability only; it is distinct
 from Department-classification confidence. The backend configuration
 must provide `OCR_THRESHOLD`, defaulting to 90%, without duplicating the
-threshold as a magic number. A score of exactly 90% passes the gate.
+threshold as a magic number. A score equal to or above the configured
+threshold passes the normal OCR gate. Below-threshold scores remain
+marked `LOW_CONFIDENCE`; the OCR threshold is not lowered or bypassed.
 
-For a score below the threshold, persist the OCR score/status and
-verification-required/status metadata, create a human-verification
-queue item, and block automatic document understanding and routing
-until an authorized General Officer or Human Verification officer
-verifies the document. The verifier may inspect the private original
-and OCR output, record a verification note, and verify or reject. Every
-verification action is audited. A verified document continues through
-broader document understanding and backend Department classification,
-routing, and assignment. A rejection is handed to the existing
-rejection/escalation workflow; this gate does not invent an application
-state transition.
+After OCR succeeds, AI quality assessment evaluates readability, quality,
+noise, and document-specific fields before the existing classification
+service runs. Deterministic text metrics and exact quote checks are
+persisted; document field profiles are extensible and are currently
+defined for Health and Income Certificates. AI-reported field
+completeness is validated and recorded, but the decision uses
+evidence-verified completeness calculated by the backend.
+
+Scores below configurable `OCR_QUALITY_HARD_MINIMUM` (default 50%) always
+require Human Verification. Scores from that minimum up to
+`OCR_QUALITY_MODERATE_FLOOR` (default 60%) require the strongest configured
+quality, field-completeness, confidence, evidence, consistency, and noise
+signals. Scores from the moderate floor to `OCR_THRESHOLD` require
+readability, `safeForAutomation`, consistency, quality score at least
+0.85, verified field completeness at least 0.80, and acceptable noise.
+Scores meeting `OCR_THRESHOLD` still require the quality/readability/noise
+checks before existing classification, department routing, and
+assignment. These signals never override OCR processing failure or
+missing/unusable OCR text. Thresholds and quality limits are
+configurable; model-reported confidence is not calibrated and cannot
+replace exact OCR evidence.
+
+Any malformed/unavailable assessment, unsupported low-confidence type,
+missing or uncertain fields, insufficient evidence, inconsistent result,
+or processing failure requires Human Verification. The verifier may
+inspect the private original and OCR output, record a verification note,
+and verify or reject. Every verification action is audited. A verified
+document continues through broader document understanding and backend
+Department classification, routing, and assignment. A rejection is
+handed to the existing rejection/escalation workflow; this gate does not
+invent an application state transition.
 
 The human-verification permission is separate from ordinary Officer
 review. It does not grant normal Officers OCR/AI inspection or controls,

@@ -112,21 +112,20 @@ OCR manipulation, or unauthorized validation tools.
 
 ## 4. General Officer Screens
 
-### Escalated-case dashboard
+### Application submission and tracking
 
-Show cases escalated by Officers, with application, Department,
-originating Officer, escalation time/status, and deadline information
-where applicable.
+Provide separate General Officer navigation for application submission
+and application tracking. Submission is a file-only upload or
+drag-and-drop flow that sends the document through the existing OCR,
+classification, routing, assignment, and verification pipeline.
+Show an immediate receipt using persisted application type, ID, and
+applicant name; use classification and OCR-derived values when available.
 
-### Escalated-case details
-
-Show application and applicant information, authorized original
-documents, OCR and Human Verification results, Officer notes,
-escalation reason/status, originating Officer, timeline and deadline.
-Allow approval or rejection with a required reason. Display the saved
-decision, reviewer, timestamp, and reason for resolved cases. Do not
-provide correction-request actions; preserve earlier Officer actions
-and application versions.
+Tracking lists submissions created from the authenticated General
+Officer account. Search by applicant name, Application ID, application
+type, and OCR-read document text on the server, returning matching
+application records without exposing raw OCR text in search results.
+Do not show an escalated-case queue in this workspace.
 
 ## 5. Admin Screens
 
@@ -154,7 +153,7 @@ behavior.
 ## 6. Status and Deadline Presentation
 
 The canonical status vocabulary is `DRAFT`, `SUBMITTED`, `PROCESSING`,
-`OFFICER_REVIEW`, `ROUTED`, `WAITING_FOR_OFFICER`, `ASSIGNED`, `UNDER_REVIEW`,
+`OFFICER_REVIEW`, `ROUTED`, `WAITING_FOR_OFFICER_ASSIGNMENT`, `ASSIGNED`, `UNDER_REVIEW`,
 `ESCALATED`, `GENERAL_OFFICER_REVIEW`, `CORRECTION_REQUIRED`,
 `RESUBMITTED`, `APPROVED`, and `REJECTED`. General Officer approval and
 reasoned rejection are reachable from escalated cases; correction/

@@ -12,6 +12,7 @@ import {
   registerOfficer,
   validateOfficerRegistration,
 } from '../services/officerRegistrationService.mjs'
+import { requestPasswordReset, resetPassword } from '../services/passwordResetService.mjs'
 
 import { requireAuth, signToken } from '../middleware/auth.mjs'
 
@@ -56,9 +57,17 @@ router.post('/officer-registration', async (req, res) => {
         email: req.body?.email,
         displayName: req.body?.displayName,
       })
+    } else if (req.body?.role === 'GENERAL_OFFICER') {
+      result = await registerOfficer({
+        governmentOfficerId: req.body?.governmentOfficerId,
+        displayName: req.body?.displayName,
+        email: req.body?.email,
+        role: 'GENERAL_OFFICER',
+      })
     } else if (req.body?.role === undefined || req.body?.role === 'OFFICER') {
       result = await registerOfficer({
         governmentOfficerId: req.body?.governmentOfficerId,
+        role: req.body?.role,
         displayName: req.body?.displayName,
         email: req.body?.email,
       })
@@ -87,6 +96,7 @@ router.post('/officer-registration/validate', async (req, res) => {
   try {
     const result = await validateOfficerRegistration({
       governmentOfficerId: req.body?.governmentOfficerId,
+      role: req.body?.role,
       displayName: req.body?.displayName,
       email: req.body?.email,
     })
@@ -120,6 +130,27 @@ router.post('/login', async (req, res) => {
     return res.json({ token, user })
   } catch (error) {
     return sendAuthError(res, error, 'Login is temporarily unavailable.')
+  }
+})
+
+router.post('/password-reset/request', async (req, res) => {
+  try {
+    const result = await requestPasswordReset(req.body?.identifier)
+    return res.json(result)
+  } catch (error) {
+    return sendAuthError(res, error, 'Password reset is temporarily unavailable.')
+  }
+})
+
+router.post('/password-reset/complete', async (req, res) => {
+  try {
+    const result = await resetPassword({
+      token: req.body?.token,
+      newPassword: req.body?.newPassword,
+    })
+    return res.json(result)
+  } catch (error) {
+    return sendAuthError(res, error, 'Password reset is temporarily unavailable.')
   }
 })
 

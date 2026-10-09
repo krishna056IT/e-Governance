@@ -128,6 +128,12 @@ export async function authenticateUser({ identifier, email, password }) {
     throw error
   }
 
+  if (user.role === 'GENERAL_OFFICER' && normalizedOfficerId !== user.governmentOfficerId) {
+    const error = new Error('Invalid credentials.')
+    error.statusCode = 401
+    throw error
+  }
+
   if (user.role === 'OFFICER') {
     if (user.accountStatus === 'PENDING') {
       const error = new Error('Officer registration is awaiting Admin approval.')
@@ -158,6 +164,22 @@ export async function authenticateUser({ identifier, email, password }) {
     if (user.accountStatus === 'SUSPENDED' || !user.isActive) {
       const error = new Error('Invalid credentials.')
       error.statusCode = 401
+      throw error
+    }
+  } else if (user.role === 'GENERAL_OFFICER') {
+    if (user.accountStatus === 'PENDING') {
+      const error = new Error('General Officer registration is awaiting Admin approval.')
+      error.statusCode = 403
+      throw error
+    }
+    if (user.accountStatus === 'REJECTED') {
+      const error = new Error('General Officer registration was rejected. Contact the administrator.')
+      error.statusCode = 403
+      throw error
+    }
+    if (user.accountStatus === 'SUSPENDED' || !user.isActive) {
+      const error = new Error('This General Officer account is inactive.')
+      error.statusCode = 403
       throw error
     }
   } else if (!user.isActive) {

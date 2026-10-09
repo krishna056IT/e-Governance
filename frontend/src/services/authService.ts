@@ -106,7 +106,21 @@ export const authService = {
     return data
   },
 
-  async validateOfficerRegistration(governmentOfficerId: string) {
+  async requestPasswordReset(identifier: string): Promise<{ message: string; resetPath?: string }> {
+    return request<{ message: string; resetPath?: string }>('/auth/password-reset/request', {
+      method: 'POST',
+      body: JSON.stringify({ identifier }),
+    })
+  },
+
+  async completePasswordReset(token: string, newPassword: string): Promise<{ message: string }> {
+    return request<{ message: string }>('/auth/password-reset/complete', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword }),
+    })
+  },
+
+  async validateOfficerRegistration(governmentOfficerId: string, role: 'OFFICER' | 'GENERAL_OFFICER' = 'OFFICER') {
     return request<{
       valid: true
       governmentOfficerId: string
@@ -116,11 +130,11 @@ export const authService = {
       reRegistered: boolean
     }>('/auth/officer-registration/validate', {
       method: 'POST',
-      body: JSON.stringify({ governmentOfficerId }),
+      body: JSON.stringify({ governmentOfficerId, role }),
     }, 'Unable to connect to the server. Please try again.')
   },
 
-  async registerOfficer(governmentOfficerId: string) {
+  async registerOfficer(governmentOfficerId: string, role: 'OFFICER' | 'GENERAL_OFFICER' = 'OFFICER') {
     return request<{
       user: UserRecord
       department: { id: string; name: string; code: string }
@@ -130,7 +144,7 @@ export const authService = {
       registrationAccessExpiresAt: string
     }>('/auth/officer-registration', {
       method: 'POST',
-      body: JSON.stringify({ governmentOfficerId }),
+      body: JSON.stringify({ governmentOfficerId, role }),
     }, 'Unable to connect to the server. Please try again.')
   },
 

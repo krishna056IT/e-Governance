@@ -17,7 +17,7 @@ import User from '../src/models/User.mjs'
 import { configureOfficerEmailSender } from '../src/services/emailService.mjs'
 
 const runId = `${process.pid}-${Date.now()}`
-const testOfficerIds = ['REV-891', 'REV-892', 'REV-893', 'REV-894', 'REV-895', 'REV-896', 'REV-897']
+const testOfficerIds = ['REV-891', 'REV-892', 'REV-893', 'REV-894', 'REV-895', 'REV-896', 'REV-897', 'REV-898']
 const testEmails = []
 const testTokenIds = []
 let server
@@ -122,7 +122,13 @@ after(async () => {
   if (admin) {
     await mongoose.connection.collection('auditevents').deleteMany({
       actorId: admin._id,
-      action: { $in: ['OFFICER_REGISTRATION_APPROVED', 'OFFICER_REGISTRATION_REJECTED'] },
+      action: { $in: [
+        'OFFICER_REGISTRATION_APPROVED',
+        'OFFICER_REGISTRATION_REJECTED',
+        'GENERAL_OFFICER_REGISTRATION_SUBMITTED',
+        'GENERAL_OFFICER_REGISTRATION_APPROVED',
+        'GENERAL_OFFICER_REGISTRATION_REJECTED',
+      ] },
     })
   }
   if (server) {
@@ -202,8 +208,72 @@ test('valid registry identity creates a pending Officer using the registry Depar
     headers: headers(),
     body: JSON.stringify({ governmentOfficerId: 'REV-891' }),
   })
+
   assert.equal(duplicateLookup.status, 409)
   assert.equal((await duplicateLookup.json()).error, 'Your registration is already awaiting administrator approval.')
+})
+
+test('General Officer registration requires Admin approval and one-time password setup', async () => {
+  const registrationResponse = await fetch(`${baseUrl}/api/auth/officer-registration`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({ role: 'GENERAL_OFFICER', governmentOfficerId: 'REV-898' }),
+  })
+  const registration = await registrationResponse.json()
+  assert.equal(registrationResponse.status, 201)
+  assert.equal(registration.user.role, 'GENERAL_OFFICER')
+  assert.equal(registration.user.accountStatus, 'PENDING')
+  assert.equal(registration.user.email, 'demo.rev-898@officers.example.test')
+  assert.equal(registration.user.departmentId, String(department._id))
+  assert.equal('passwordHash' in registration.user, false)
+
+  const pendingLogin = await login('REV-898', 'AnyPassword123!')
+  assert.equal(pendingLogin.status, 403)
+  assert.match((await pendingLogin.json()).error, /awaiting Admin approval/i)
+
+  const accessHeaders = headers(registration.registrationAccessToken)
+  const pendingStatus = await fetch(`${baseUrl}/api/officer/registration/status`, {
+    method: 'POST',
+    headers: accessHeaders,
+    body: JSON.stringify({ role: 'GENERAL_OFFICER', governmentOfficerId: 'REV-898' }),
+  })
+  assert.equal((await pendingStatus.json()).status, 'PENDING')
+
+  const approval = await fetch(`${baseUrl}/api/admin/officer-registrations/${registration.user.id}/approve`, {
+    method: 'POST',
+    headers: headers(adminToken),
+  })
+  assert.equal(approval.status, 200)
+  assert.match((await approval.json()).message, /General Officer registration approved/i)
+
+  const approvedStatusResponse = await fetch(`${baseUrl}/api/officer/registration/status`, {
+    method: 'POST',
+    headers: accessHeaders,
+    body: JSON.stringify({ role: 'GENERAL_OFFICER', governmentOfficerId: 'REV-898' }),
+  })
+  const approvedStatus = await approvedStatusResponse.json()
+  assert.equal(approvedStatus.status, 'APPROVED')
+  assert.equal(approvedStatus.passwordSetupAvailable, true)
+  assert.equal(approvedStatus.passwordSetupUrl, '/general-officer/setup?registration=1&officerId=REV-898')
+
+  const setup = await fetch(`${baseUrl}/api/officer/registration/setup`, {
+    method: 'POST',
+    headers: accessHeaders,
+    body: JSON.stringify({
+      role: 'GENERAL_OFFICER',
+      governmentOfficerId: 'REV-898',
+      temporaryPassword: 'GeneralOfficerPassword123!',
+    }),
+  })
+  assert.equal(setup.status, 200)
+  assert.equal((await setup.json()).user.role, 'GENERAL_OFFICER')
+
+  const emailLogin = await login(registration.user.email, 'GeneralOfficerPassword123!')
+  assert.equal(emailLogin.status, 401)
+
+  const activeLogin = await login('REV-898', 'GeneralOfficerPassword123!')
+  assert.equal(activeLogin.status, 200)
+  assert.equal((await activeLogin.json()).user.role, 'GENERAL_OFFICER')
 })
 
 test('production approval sends setup email without returning preview references or setup tokens', async () => {

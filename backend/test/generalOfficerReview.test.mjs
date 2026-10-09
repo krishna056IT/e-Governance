@@ -197,6 +197,63 @@ test('General Officer queue returns only MongoDB-backed escalated applications',
   assert.ok(applications.every((record) => record.status === 'ESCALATED'))
 })
 
+test('General Officer tracking searches own submissions using OCR text without exposing it', async () => {
+  const ownSubmission = await Application.create({
+    applicantId: generalOfficer._id,
+    applicationType: 'Income Certificate',
+    applicationData: {
+      title: `Dashboard search ${runId}`,
+      applicantName: generalOfficer.displayName,
+      contactEmail: generalOfficer.email,
+      details: 'Submitted through the General Officer workspace.',
+    },
+    status: 'WAITING_FOR_OFFICER_ASSIGNMENT',
+    submittedAt: new Date(),
+  })
+  createdApplications.push(ownSubmission._id)
+  const originalBuffer = Buffer.from('private dashboard search document')
+  const originalStorageId = await storeOriginal(originalBuffer, '.png')
+  const extractedTextStorageId = await storeExtractedText(
+    randomUUID(),
+    'Official document number: GO-OCR-APP-92841',
+  )
+  const document = await Document.create({
+    applicationId: ownSubmission._id,
+    applicantId: generalOfficer._id,
+    originalFilename: 'general-officer-submission.png',
+    documentType: 'Income Certificate',
+    mimeType: 'image/png',
+    fileSize: originalBuffer.length,
+    originalStorageId,
+    extractedTextStorageId,
+    ocrStatus: 'COMPLETED',
+    ocrConfidence: 97,
+    ocrThreshold: 90,
+  })
+  createdDocuments.push(document._id)
+
+  const ownSearch = await request(
+    '/api/general-officer/dashboard?search=GO-OCR-APP-92841',
+    generalOfficerToken,
+  )
+  const ownDashboard = await ownSearch.json()
+  assert.equal(ownSearch.status, 200)
+  assert.deepEqual(ownDashboard.submissions.map(({ id }) => id), [String(ownSubmission._id)])
+  assert.equal(ownDashboard.submissions[0].documents[0].extractedText, undefined)
+  assert.equal(ownDashboard.escalatedCases, undefined)
+
+  const unrelatedOcrSearch = await request(
+    '/api/general-officer/dashboard?search=10%20Main%20Street',
+    generalOfficerToken,
+  )
+  const trackingResult = await unrelatedOcrSearch.json()
+  assert.equal(unrelatedOcrSearch.status, 200)
+  assert.deepEqual(trackingResult.submissions, [])
+
+  assert.equal((await request('/api/general-officer/dashboard?search=too-long', applicantToken)).status, 403)
+  assert.equal((await request(`/api/general-officer/dashboard?search=${'a'.repeat(161)}`, generalOfficerToken)).status, 400)
+})
+
 test('General Officer APIs enforce authentication, role, and permission', async () => {
   await createApplication()
   assert.equal((await request('/api/general-officer/applications')).status, 401)

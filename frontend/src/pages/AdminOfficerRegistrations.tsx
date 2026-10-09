@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { EmptyState } from '../components/ui'
 import { AdminTable } from '../components/admin/AdminPrimitives'
 import type { DepartmentRecord, OfficerRegistrationRecord } from '../types'
@@ -11,6 +12,12 @@ function formatDate(value?: string) {
     : '—'
 }
 
+function registrationRoleLabel(role: OfficerRegistrationRecord['role']) {
+  if (role === 'GENERAL_OFFICER') return 'General Officer'
+  if (role === 'HUMAN_VERIFIER') return 'Human Verifier Officer'
+  return 'Government Officer'
+}
+
 export function AdminOfficerRegistrations({
   registrations,
   departmentsById,
@@ -20,6 +27,7 @@ export function AdminOfficerRegistrations({
   pendingActionId,
   onView,
   onApprove,
+  onReissueSetup,
   onReject,
   onClearSearch,
 }: {
@@ -31,6 +39,10 @@ export function AdminOfficerRegistrations({
   pendingActionId: string | null
   onView: (registrationId: string) => Promise<OfficerRegistrationRecord>
   onApprove: (registration: OfficerRegistrationRecord) => void
+  onReissueSetup: (registration: OfficerRegistrationRecord) => Promise<{
+    message: string
+    setupPath?: string
+  } | null>
   onReject: (registration: OfficerRegistrationRecord) => void
   onClearSearch: () => void
 }) {
@@ -38,6 +50,7 @@ export function AdminOfficerRegistrations({
   const [selectedRegistration, setSelectedRegistration] = useState<OfficerRegistrationRecord | null>(null)
   const [loadingDetailsId, setLoadingDetailsId] = useState<string | null>(null)
   const [detailError, setDetailError] = useState('')
+  const [setupPath, setSetupPath] = useState('')
   const query = search.trim().toLowerCase()
   const filtered = registrations.filter((registration) => {
     const status = registration.accountStatus || (registration.isActive ? 'ACTIVE' : 'SUSPENDED')
@@ -70,6 +83,13 @@ export function AdminOfficerRegistrations({
         <div className={`admin-inline-message${actionMessageIsError ? ' admin-inline-message--error' : ''}`}
           role={actionMessageIsError ? 'alert' : 'status'}>
           <p>{actionMessage}</p>
+          {setupPath && (
+            <p>
+              Development setup link (share privately; one-time use):
+              {' '}
+              <Link to={setupPath}>Open password setup</Link>
+            </p>
+          )}
         </div>
       )}
       {selectedRegistration && (
@@ -82,7 +102,7 @@ export function AdminOfficerRegistrations({
             <button className="button button--secondary button--small" type="button" onClick={() => setSelectedRegistration(null)}>Close details</button>
           </div>
           <dl className="admin-registration-detail">
-            <div><dt>Officer type</dt><dd>{selectedRegistration.role === 'HUMAN_VERIFIER' ? 'Human Verifier Officer' : 'Government Officer'}</dd></div>
+            <div><dt>Officer type</dt><dd>{registrationRoleLabel(selectedRegistration.role)}</dd></div>
             {selectedRegistration.governmentOfficerId && <div><dt>Government Officer ID</dt><dd>{selectedRegistration.governmentOfficerId}</dd></div>}
             <div><dt>Official email</dt><dd>{selectedRegistration.email}</dd></div>
             <div><dt>Department</dt><dd>{departmentsById.get(selectedRegistration.departmentId || '')?.name || '—'}</dd></div>
@@ -100,7 +120,7 @@ export function AdminOfficerRegistrations({
           <div>
             <p className="admin-eyebrow">IDENTITY REVIEW</p>
             <h2>Officer registrations</h2>
-            <p>Review Government Officer and Human Verifier Officer registrations.</p>
+            <p>Review Government Officer, General Officer, and Human Verifier registrations.</p>
           </div>
           <label className="admin-filter">
             <span>Registration status</span>
@@ -116,7 +136,7 @@ export function AdminOfficerRegistrations({
         {filtered.length === 0 ? (
           <EmptyState
             title={registrations.length ? 'No matching registrations' : 'No Officer registrations'}
-            description={registrations.length ? 'Try a different search or status filter.' : 'New registrations will appear here after a Government Officer identity is validated.'}
+            description={registrations.length ? 'Try a different search or status filter.' : 'New staff registration requests will appear here after identity validation.'}
             action={search || statusFilter !== 'PENDING'
               ? <button className="button button--quiet button--small" type="button" onClick={() => { setStatusFilter('PENDING'); onClearSearch() }}>Clear filters</button>
               : undefined}
@@ -129,7 +149,7 @@ export function AdminOfficerRegistrations({
               const department = registration.departmentId ? departmentsById.get(registration.departmentId) : null
               return (
                 <tr key={registration.id}>
-                  <td>{registration.role === 'HUMAN_VERIFIER' ? 'Human Verifier Officer' : 'Government Officer'}</td>
+                  <td>{registrationRoleLabel(registration.role)}</td>
                   <td><span className="admin-code">{registration.governmentOfficerId || '—'}</span></td>
                   <td className="admin-table__primary">{registration.displayName}</td>
                   <td>{department?.name || '—'}</td>
@@ -148,6 +168,26 @@ export function AdminOfficerRegistrations({
                       <button className="admin-text-action admin-text-action--danger" type="button" disabled={pendingActionId === registration.id}
                         onClick={() => onReject(registration)}>Reject</button>
                     </>}
+                    {['OFFICER', 'GENERAL_OFFICER'].includes(registration.role) &&
+                      registration.accountStatus === 'ACTIVE' &&
+                      registration.isActive === true &&
+                      registration.mustChangePassword === true && (
+                        <button
+                          className="admin-text-action"
+                          type="button"
+                          disabled={pendingActionId === registration.id}
+                          onClick={async () => {
+                            setSetupPath('')
+                            try {
+                              const result = await onReissueSetup(registration)
+                              if (result) setSetupPath(result.setupPath || '')
+                            } catch {
+                              setSetupPath('')
+                            }
+                          }}>
+                          Reissue password setup
+                        </button>
+                      )}
                   </td>
                 </tr>
               )

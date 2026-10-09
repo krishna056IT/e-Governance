@@ -29,7 +29,7 @@ rather than silently inventing behavior.
 5. Derive Department from the registry; never accept an Officer-selected
    Department for this flow. Registry identities and User accounts are
    separate; seeding identities must not provision accounts.
-6. New registrations are `PENDING` and cannot authenticate until the
+6. New Officer and General Officer registrations are `PENDING` and cannot authenticate until the
    existing Admin approves them. Approval/rejection requires the
    existing Admin `USER_MANAGE` permission; rejection requires a reason.
 7. One Government Officer ID may have only one User account. Pending and
@@ -44,12 +44,15 @@ rather than silently inventing behavior.
    password setup requires that credential as well as the matching ID,
    and only after Admin approval. Never expose the setup URL through
    Admin APIs or UI.
-9. Officers log in using their Government Officer ID or registered
-   email. Setup requires password confirmation, hashes the chosen
+9. Department Officers log in using their Government Officer ID or
+   registered email. General Officers log in using their Government
+   Officer ID only. Their registry email and Department are not
+   applicant-selected. Setup requires password confirmation, hashes the chosen
    password with bcrypt, consumes the setup token, and clears
    `mustChangePassword` and the registration status credential. Knowing
    a Government Officer ID alone must never authorize password setup or
-   grant Officer application permissions.
+   grant staff application permissions. Admin staff provisioning must
+   not bypass registration approval for either role.
 10. Passwords and one-time setup tokens must never be returned, logged,
     hard-coded, or stored in plaintext. Return the random registration
     status credential only to the officer-registration submitter; store
@@ -83,12 +86,33 @@ fallback, not a silent guess.
 - Calculate and store an OCR confidence percentage for every processed
   document. Backend configuration/environment provides one
   `OCR_THRESHOLD`, default `90`; do not duplicate it as a magic number.
-- A score below the configured threshold (90% by default) must set
-  `humanVerificationRequired` and persist a `PENDING` verification
-  state on the document.
-  Until verified, it must not proceed to document understanding,
-  Department classification, routing, or assignment. At the default
-  threshold, exactly 90% may continue automatically.
+- A score equal to or above the configured threshold may continue through
+  the normal OCR gate. A below-threshold score remains `LOW_CONFIDENCE`;
+  the OCR threshold is never lowered or bypassed.
+- After OCR succeeds and usable text is present, a configurable AI
+  document-quality assessment runs once for below-threshold documents
+  before existing fallback checks. It assesses OCR evidence; it does not
+  generate replacement OCR text. OCR failure is never overridden, and
+  unusable text is never sent to AI.
+- Scores below `OCR_QUALITY_HARD_MINIMUM` (default 50%) always enter
+  Human Verification. Between that minimum and
+  `OCR_QUALITY_MODERATE_FLOOR` (default 60%), require the stronger
+  quality/completeness/noise limits and exact evidence for all expected
+  fields. From the moderate floor to `OCR_THRESHOLD`, require readable
+  text, safe and consistent AI assessment, quality score at least 0.85,
+  verified field completeness at least 0.80, and acceptable OCR noise.
+  At or above `OCR_THRESHOLD`, the quality/readability/noise checks still
+  apply before the existing classification path.
+- Document-specific expected-field profiles are extensible; Health and
+  Income Certificates have separate profiles. Verified completeness is
+  calculated deterministically from clear field values, minimum field
+  confidence, and exact evidence contained in OCR. The model's reported
+  completeness does not substitute for this calculation. Model
+  confidence is not calibrated and cannot replace exact evidence.
+- Unsupported low-confidence types, missing or uncertain fields,
+  malformed/unavailable assessments, inconsistent results, and
+  processing failures must enter Human Verification. The configured OCR
+  threshold is never lowered or bypassed.
 - OCR confidence is extraction reliability, not Department-routing
   confidence. Preserve broader document understanding for Department
   routing after the OCR gate.
@@ -162,15 +186,17 @@ After backend routing selects a Department:
 2. Pending assignment workload counts exactly `ASSIGNED` and
    `UNDER_REVIEW`.
 3. Do not count `DRAFT`, `SUBMITTED`, `PROCESSING`, `ROUTED`,
-   `WAITING_FOR_OFFICER`, `ESCALATED`, `CORRECTION_REQUIRED`,
+   `WAITING_FOR_OFFICER`, `WAITING_FOR_OFFICER_ASSIGNMENT`, `ESCALATED`, `CORRECTION_REQUIRED`,
    `RESUBMITTED`, `APPROVED`, or `REJECTED`.
 4. Choose the eligible Officer with the least pending workload.
-5. For equal counts, choose oldest `lastAssignedAt` first (never
-   assigned sorts first), then government Officer ID ascending. This
-   deterministic tie-break is the required fair ordering.
-6. Count and assignment are atomic/concurrency-safe. Prevent duplicate
-   active assignments and stale-count over-assignment.
-7. If no eligible Officer is available, use `WAITING_FOR_OFFICER`.
+5. For equal counts, choose the Officer whose most recent assignment
+   across application history is oldest first (never assigned sorts
+   first), then stable User ID ascending.
+6. Serialize workload selection and assignment with the Department's
+   database lease lock so concurrent submissions cannot use stale
+   workload counts. Recheck that the application is still eligible while
+   holding the lock.
+7. If no eligible Officer is available, use `WAITING_FOR_OFFICER_ASSIGNMENT`.
    Never silently assign to another Department.
 
 ## 8. Deadline Rules

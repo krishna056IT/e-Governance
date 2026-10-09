@@ -1,6 +1,7 @@
 import mongoose from 'mongoose'
+import { VERIFICATION_REASON_CODES } from '../services/verificationReasonService.mjs'
 
-const applicationStatuses = [
+export const APPLICATION_STATUSES = Object.freeze([
   'DRAFT',
   'SUBMITTED',
   'PROCESSING',
@@ -8,6 +9,7 @@ const applicationStatuses = [
   'OFFICER_REVIEW',
   'ROUTED',
   'WAITING_FOR_OFFICER',
+  'WAITING_FOR_OFFICER_ASSIGNMENT',
   'ASSIGNED',
   'UNDER_REVIEW',
   'ESCALATED',
@@ -16,7 +18,11 @@ const applicationStatuses = [
   'RESUBMITTED',
   'APPROVED',
   'REJECTED',
-]
+])
+
+export const TERMINAL_APPLICATION_STATUSES = Object.freeze(['APPROVED', 'REJECTED'])
+export const ACTIVE_APPLICATION_STATUSES = Object.freeze(APPLICATION_STATUSES.filter((status) =>
+  status !== 'DRAFT' && !TERMINAL_APPLICATION_STATUSES.includes(status)))
 
 const officerReviewNoteSchema = new mongoose.Schema(
   {
@@ -34,6 +40,29 @@ const generalOfficerReviewNoteSchema = new mongoose.Schema(
     action: { type: String, enum: ['APPROVED', 'REJECTED'], required: true },
     reason: { type: String, maxlength: 2000, default: null },
     at: { type: Date, required: true },
+  },
+  { _id: false },
+)
+
+const verificationReasonSchema = new mongoose.Schema(
+  {
+    code: { type: String, enum: VERIFICATION_REASON_CODES, required: true },
+    message: { type: String, required: true, maxlength: 500 },
+    action: { type: String, required: true, maxlength: 1000 },
+    documentId: { type: String, required: true },
+    documentName: { type: String, required: true, maxlength: 255 },
+    ocrStatus: { type: String, default: null },
+    ocrConfidence: { type: Number, min: 0, max: 100, default: null },
+    threshold: { type: Number, min: 0, max: 100, default: null },
+    failureCode: { type: String, default: null },
+    failureDescription: { type: String, default: null, maxlength: 500 },
+    predictedDocumentType: { type: String, default: null, maxlength: 120 },
+    predictedDepartment: { type: String, default: null, maxlength: 200 },
+    classificationConfidence: { type: Number, min: 0, max: 1, default: null },
+    fieldNames: { type: [String], default: [] },
+    qualityScore: { type: Number, min: 0, max: 1, default: null },
+    fieldCompleteness: { type: Number, min: 0, max: 1, default: null },
+    ocrNoiseScore: { type: Number, min: 0, max: 1, default: null },
   },
   { _id: false },
 )
@@ -60,10 +89,26 @@ const applicationSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: applicationStatuses,
+      enum: APPLICATION_STATUSES,
       default: 'DRAFT',
       required: true,
       index: true,
+    },
+    processingDecision: {
+      type: String,
+      enum: ['AUTO_PROCESSED', 'HUMAN_VERIFICATION', null],
+      default: null,
+      index: true,
+    },
+    processingDecisionAt: {
+      type: Date,
+      default: null,
+    },
+    automationAssessment: {
+      requiredFieldCount: { type: Number, min: 0, default: 0 },
+      completeFieldCount: { type: Number, min: 0, default: 0 },
+      evidenceSupportedFieldCount: { type: Number, min: 0, default: 0 },
+      confidenceQualifiedFieldCount: { type: Number, min: 0, default: 0 },
     },
     departmentId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -94,6 +139,10 @@ const applicationSchema = new mongoose.Schema(
       type: String,
       default: null,
       maxlength: 2000,
+    },
+    verificationReasons: {
+      type: [verificationReasonSchema],
+      default: [],
     },
     humanVerificationDecision: {
       type: String,

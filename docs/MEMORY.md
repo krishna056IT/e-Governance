@@ -92,11 +92,12 @@ drifts from them, update it rather than treating it as an override.
 - Select an eligible Officer in the routed Department with the least
   pending applications.
 - Pending for assignment means exactly `ASSIGNED` and `UNDER_REVIEW`.
-- Equal counts use oldest `lastAssignedAt` first (never assigned first),
-  then government Officer ID ascending.
-- Count and assignment are atomic/concurrency-safe; prevent duplicate
-  active assignments.
-- If no eligible Officer is available, use `WAITING_FOR_OFFICER`; never
+- Equal counts use the oldest most-recent assignment timestamp across
+  application history (never assigned first), then stable User ID.
+- A Department-scoped database lease serializes workload reads and
+  assignment writes; pending counts include exactly `ASSIGNED` and
+  `UNDER_REVIEW`.
+- If no eligible Officer is available, use `WAITING_FOR_OFFICER_ASSIGNMENT`; never
   silently send the case to another Department.
 
 ### Officer and General Officer
@@ -151,7 +152,7 @@ Current lifecycle vocabulary:
 
 ```text
 DRAFT → SUBMITTED → PROCESSING → ROUTED
-                                  ├→ WAITING_FOR_OFFICER → ASSIGNED
+                                  ├→ WAITING_FOR_OFFICER_ASSIGNMENT → ASSIGNED
                                   └→ ASSIGNED
                                        → UNDER_REVIEW (explicit Start
                                          Review by assigned Officer)
