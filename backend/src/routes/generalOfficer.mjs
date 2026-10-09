@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import multer from 'multer'
 import { parse as parsePath } from 'node:path'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import { env } from '../config/env.mjs'
 import { requireAuth, requirePermission, requireRole } from '../middleware/auth.mjs'
 import Application from '../models/Application.mjs'
@@ -27,12 +28,12 @@ const upload = multer({
 router.use(requireAuth, requireRole('GENERAL_OFFICER'), requirePermission('APPLICATION_VIEW_ASSIGNED'))
 
 function sendReviewError(res, error) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
   return res.status(status).json({
-    error: status >= 500
-      ? 'General Officer review service is temporarily unavailable.'
-      : error.message,
+    error: isDatabaseError
+      ? 'General Officer review is temporarily unavailable because the database connection failed.'
+      : status >= 500 ? 'General Officer review request failed.' : error.message,
   })
 }
 

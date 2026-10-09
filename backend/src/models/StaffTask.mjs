@@ -34,6 +34,7 @@ const staffTaskSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 staffTaskSchema.index({ status: 1, dueAt: 1 })
+staffTaskSchema.index({ staffId: 1, assignedAt: 1 })
 staffTaskSchema.index({ staffId: 1, createdAt: -1 })
 staffTaskSchema.index({ taskType: 1, applicationId: 1, documentId: 1, assignedAt: -1 })
 

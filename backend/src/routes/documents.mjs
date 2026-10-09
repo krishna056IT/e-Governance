@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import { requireAuth, requireOfficerPasswordChanged } from '../middleware/auth.mjs'
 import {
   getApplicantDocument,
@@ -59,10 +60,12 @@ router.get('/:documentId', requireAuth, requireOfficerPasswordChanged, async (re
       })
       .send(result.content)
   } catch (error) {
-    const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+    const isDatabaseError = isDatabaseUnavailableError(error)
     const status = isDatabaseError ? 503 : 500
     return res.status(status).json({
-      error: status === 503 ? 'Document service is temporarily unavailable.' : 'The document could not be retrieved.',
+      error: isDatabaseError
+        ? 'Document service is temporarily unavailable because the database connection failed.'
+        : 'The document could not be retrieved.',
     })
   }
 })

@@ -24,6 +24,8 @@ import {
   rejectOfficerRegistration,
 } from '../services/officerRegistrationService.mjs'
 import { retryWaitingApplicationAssignment } from '../services/applicationAssignmentService.mjs'
+import { getStaffPerformance } from '../services/staffPerformanceService.mjs'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import {
   extendStaffTaskDeadline,
   getStaffTaskHistory,
@@ -32,12 +34,46 @@ import {
 } from '../services/staffTaskService.mjs'
 
 const router = Router()
+
+function safeAdminPath(path) {
+  return path.replace(/\/[a-f\d]{24}(?=\/|$)/gi, '/:id')
+}
+
+router.use((req, res, next) => {
+  res.on('finish', () => {
+    if (res.statusCode < 400) return
+    const failure = res.locals.adminFailure || {}
+    console.warn(JSON.stringify({
+      service: 'admin_api',
+      event: 'request_failed',
+      method: req.method,
+      route: req.route?.path || safeAdminPath(req.path),
+      status: res.statusCode,
+      classification: failure.classification,
+      errorName: failure.errorName,
+      errorCode: failure.errorCode,
+      causeName: failure.causeName,
+      causeCode: failure.causeCode,
+    }))
+  })
+  next()
+})
+
 router.use(requireAuth, requireRole('ADMIN'))
 
 function sendAdminError(res, error) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
-  const message = status >= 500 ? 'Admin management is temporarily unavailable.' : error.message
+  res.locals.adminFailure = {
+    classification: isDatabaseError ? 'database_unavailable' : 'application_error',
+    errorName: typeof error?.name === 'string' ? error.name : 'UnknownError',
+    errorCode: typeof error?.code === 'string' ? error.code : undefined,
+    causeName: typeof error?.cause?.name === 'string' ? error.cause.name : undefined,
+    causeCode: typeof error?.cause?.code === 'string' ? error.cause.code : undefined,
+  }
+  const message = isDatabaseError
+    ? 'Admin data is temporarily unavailable because the database connection failed. Please try again.'
+    : status >= 500 ? 'Admin management request failed.' : error.message
   return res.status(status).json({ error: message })
 }
 
@@ -72,6 +108,24 @@ router.get('/staff-tasks', requirePermission('USER_MANAGE'), async (_req, res) =
   try {
     const tasks = await listAdminStaffTasks()
     return res.json({ tasks })
+  } catch (error) {
+    return sendAdminError(res, error)
+  }
+})
+
+router.get('/staff-performance', requirePermission('USER_MANAGE'), async (req, res) => {
+  try {
+    const metrics = await getStaffPerformance({
+      period: req.query.period,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      role: req.query.role,
+      status: req.query.status,
+      departmentId: req.query.departmentId,
+      staffId: req.query.staffId,
+      search: req.query.search,
+    })
+    return res.json(metrics)
   } catch (error) {
     return sendAdminError(res, error)
   }

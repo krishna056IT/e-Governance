@@ -3,16 +3,18 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { Brand } from './layout'
 
-export type AdminSection = 'dashboard' | 'departments' | 'officers' | 'officer-registrations'
+export type AdminSection = 'dashboard' | 'departments' | 'officers' | 'officer-registrations' | 'officer-status'
 
 const navigation: { id: AdminSection; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '◫' },
+  { id: 'officer-status', label: 'Officer Status', icon: '◷' },
   { id: 'departments', label: 'Departments', icon: '⌂' },
   { id: 'officer-registrations', label: 'Officer registrations', icon: '✓' },
 ]
 
 const sectionLabels: Record<AdminSection, string> = {
   dashboard: 'Dashboard',
+  'officer-status': 'Officer Status',
   departments: 'Departments',
   officers: 'Officers & users',
   'officer-registrations': 'Officer registrations',
@@ -105,7 +107,7 @@ export function AdminLayout({
       </aside>
 
       <div className="admin-workspace">
-        <header className="admin-topbar">
+        <header className={`admin-topbar${section === 'officer-status' ? ' admin-topbar--metrics' : ''}`}>
           <div className="admin-topbar__heading">
             <button
               className="admin-menu-toggle"

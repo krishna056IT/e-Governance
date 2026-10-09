@@ -5,31 +5,28 @@ import Demerit from '../models/Demerit.mjs'
 import Document from '../models/Document.mjs'
 import StaffTask from '../models/StaffTask.mjs'
 import User from '../models/User.mjs'
-import { connectDatabase, isDatabaseConnected } from '../config/database.mjs'
+import { isDatabaseConnected } from '../config/database.mjs'
+import { databaseErrorDetails } from '../config/databaseErrors.mjs'
 import { createAuditEvent } from './auditService.mjs'
 
-async function ensureDatabaseConnection() {
-  if (isDatabaseConnected()) return true
-  if (mongoose.connection.readyState === 2) {
-    try {
-      await mongoose.connection.asPromise()
-    } catch (error) {
-      console.error('[STAFF_TASK_DEADLINES] Database reconnection failed.', error)
-      return false
-    }
-    return isDatabaseConnected()
-  }
-  if (mongoose.connection.readyState !== 0) return false
-  await connectDatabase()
+let staffTaskIndexesPromise = null
+
+function ensureDatabaseConnection() {
   return isDatabaseConnected()
 }
 
 async function ensureStaffTaskIndexes() {
-  await Promise.all([
+  if (!staffTaskIndexesPromise) {
+    staffTaskIndexesPromise = Promise.all([
     StaffTask.collection.createIndex({ status: 1, dueAt: 1 }),
     Demerit.collection.createIndex({ staffTaskId: 1 }, { unique: true }),
     AuditEvent.collection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true }),
-  ])
+    ]).catch((error) => {
+    staffTaskIndexesPromise = null
+    throw error
+    })
+  }
+  await staffTaskIndexesPromise
 }
 
 function requestError(message, statusCode) {
@@ -208,7 +205,7 @@ export async function getStaffTask(taskType, applicationId, staffId, documentId 
 }
 
 export async function processOverdueStaffTasks(now = new Date(), { taskIds } = {}) {
-  if (!await ensureDatabaseConnection()) throw new Error('MongoDB is unavailable for the overdue staff task scan.')
+  if (!ensureDatabaseConnection()) return 0
   await ensureStaffTaskIndexes()
   const overdueTasks = await StaffTask.find({
     status: 'ASSIGNED',
@@ -278,7 +275,11 @@ export function startOverdueStaffTaskProcessor({ intervalMs = 60_000 } = {}) {
     try {
       await processOverdueStaffTasks()
     } catch (error) {
-      console.error('[STAFF_TASK_DEADLINES] Overdue processing failed; it will retry.', error)
+      console.error(JSON.stringify({
+        service: 'staff-task-deadlines',
+        event: 'processing_failed',
+        ...databaseErrorDetails(error),
+      }))
     } finally {
       running = false
     }

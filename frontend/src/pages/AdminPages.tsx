@@ -19,6 +19,7 @@ import { AdminDashboardHome } from './AdminDashboardHome'
 import { AdminDepartments } from './AdminDepartments'
 import { AdminUsers } from './AdminUsers'
 import { AdminOfficerRegistrations } from './AdminOfficerRegistrations'
+import { OfficerStatusPage } from './OfficerStatusPage'
 
 const emptyStaffForm: StaffForm = {
   email: '',
@@ -46,7 +47,7 @@ async function fetchAdminData() {
 export function AdminDashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const rawSection = searchParams.get('section')
-  const section: AdminSection = rawSection === 'departments' || rawSection === 'officers' ||
+  const section: AdminSection = rawSection === 'officer-status' || rawSection === 'departments' || rawSection === 'officers' ||
     rawSection === 'officer-registrations'
     ? rawSection
     : 'dashboard'
@@ -97,6 +98,10 @@ export function AdminDashboardPage() {
   }
 
   useEffect(() => {
+    if (section === 'officer-status') {
+      setLoading(false)
+      return
+    }
     let active = true
     fetchAdminData()
       .then((data) => {
@@ -117,7 +122,7 @@ export function AdminDashboardPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [section])
 
   const departmentById = useMemo(
     () => new Map(departments.map((department) => [department.id, department])),
@@ -426,6 +431,8 @@ export function AdminDashboardPage() {
 
   const searchProps = section === 'departments'
     ? { searchValue: search, searchPlaceholder: 'Search departments', onSearchChange: setSearch }
+    : section === 'officer-status'
+      ? { searchValue: search, searchPlaceholder: 'Search staff', onSearchChange: setSearch }
     : section === 'officers'
       ? { searchValue: search, searchPlaceholder: 'Search accounts', onSearchChange: setSearch }
       : section === 'officer-registrations'
@@ -437,6 +444,11 @@ export function AdminDashboardPage() {
       eyebrow: 'ADMINISTRATIVE SERVICES',
       title: 'Government administration',
       description: 'A current view of the organization and its service operations.',
+    },
+    'officer-status': {
+      eyebrow: 'STAFF PERFORMANCE',
+      title: 'Officer Status',
+      description: 'Track Officer and Human Verifier workload, completion time, and deadline compliance.',
     },
     departments: {
       eyebrow: 'ORGANIZATION',
@@ -458,6 +470,10 @@ export function AdminDashboardPage() {
 
   return (
     <AdminLayout section={section} {...searchProps}>
+      {section === 'officer-status' ? (
+        <OfficerStatusPage searchValue={search} />
+      ) : (
+        <>
       {section !== 'dashboard' && <PageHeader eyebrow={page.eyebrow} title={page.title} description={page.description} />}
       {loading ? <AdminPageLoading /> : error ? (
         <ErrorState message={error} onRetry={() => void load()} />
@@ -564,6 +580,8 @@ export function AdminDashboardPage() {
               onClearSearch={() => setSearch('')}
             />
           )}
+        </>
+      )}
         </>
       )}
     </AdminLayout>

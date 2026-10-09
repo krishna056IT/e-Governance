@@ -1,11 +1,43 @@
 import type { DepartmentRecord, OfficerRegistrationRecord, UserRecord } from '../types'
 import type { AdminOverview } from '../types/admin'
-import type { AdminDemerit, AdminStaffTask, AdminStaffTaskHistory } from '../types/admin'
+import type {
+  AdminDemerit,
+  AdminStaffTask,
+  AdminStaffTaskHistory,
+  StaffPerformanceFilters,
+  StaffPerformanceMetrics,
+} from '../types/admin'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+const GET_RETRY_DELAYS_MS = [500, 1500]
 
 interface ApiError {
   error?: string
+}
+
+function safeEndpoint(endpoint: string) {
+  return endpoint
+    .split('?')[0]
+    .replace(/\/[a-f\d]{24}(?=\/|$)/gi, '/:id')
+}
+
+function logAdminRequestFailure(
+  event: 'request_retry' | 'request_failed',
+  method: string,
+  endpoint: string,
+  details: { status?: number; errorName?: string; attempt?: number },
+) {
+  console.warn(JSON.stringify({
+    service: 'admin_api_client',
+    event,
+    method,
+    endpoint: safeEndpoint(endpoint),
+    ...details,
+  }))
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
 export class AdminApiError extends Error {
@@ -19,6 +51,7 @@ export class AdminApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase()
   const headers = new Headers(options.headers)
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -29,10 +62,48 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
+  let response: Response | undefined
+  let attempts = 0
+  for (let attempt = 0; ; attempt += 1) {
+    attempts = attempt + 1
+    try {
+      response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers,
+      })
+    } catch (reason) {
+      const canRetry = method === 'GET' &&
+        attempt < GET_RETRY_DELAYS_MS.length &&
+        (!(reason instanceof DOMException) || reason.name !== 'AbortError')
+      if (canRetry) {
+        logAdminRequestFailure('request_retry', method, endpoint, {
+          errorName: reason instanceof Error ? reason.name : 'UnknownError',
+          attempt: attempt + 1,
+        })
+        await wait(GET_RETRY_DELAYS_MS[attempt])
+        continue
+      }
+      logAdminRequestFailure('request_failed', method, endpoint, {
+        errorName: reason instanceof Error ? reason.name : 'UnknownError',
+        attempt: attempt + 1,
+      })
+      throw reason
+    }
+
+    const canRetry = method === 'GET' &&
+      [502, 503, 504].includes(response.status) &&
+      attempt < GET_RETRY_DELAYS_MS.length
+    if (canRetry) {
+      logAdminRequestFailure('request_retry', method, endpoint, {
+        status: response.status,
+        attempt: attempt + 1,
+      })
+      await response.body?.cancel()
+      await wait(GET_RETRY_DELAYS_MS[attempt])
+      continue
+    }
+    break
+  }
 
   let data: (T & ApiError) | undefined
   try {
@@ -42,10 +113,19 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok) {
+    logAdminRequestFailure('request_failed', method, endpoint, {
+      status: response.status,
+      attempt: attempts,
+    })
     throw new AdminApiError(data?.error || 'Something went wrong.', response.status)
   }
 
   if (!data) {
+    logAdminRequestFailure('request_failed', method, endpoint, {
+      status: response.status,
+      errorName: 'InvalidResponse',
+      attempt: attempts,
+    })
     throw new AdminApiError('The server returned an invalid response.', response.status)
   }
 
@@ -75,6 +155,15 @@ export const adminService = {
   async listStaffTasks() {
     const data = await request<{ tasks: AdminStaffTask[] }>('/admin/staff-tasks')
     return data.tasks
+  },
+
+  async getStaffPerformance(filters: StaffPerformanceFilters) {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value && value !== 'ALL') params.set(key, value)
+    }
+    const query = params.toString()
+    return request<StaffPerformanceMetrics>(`/admin/staff-performance${query ? `?${query}` : ''}`)
   },
 
   async getStaffTaskHistory(taskId: string) {

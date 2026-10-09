@@ -21,6 +21,7 @@ function requireDatabase() {
   if (!isDatabaseConnected()) {
     const error = new Error('Authentication service is temporarily unavailable.')
     error.statusCode = 503
+    error.code = 'DATABASE_UNAVAILABLE'
     throw error
   }
 }

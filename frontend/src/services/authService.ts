@@ -202,6 +202,7 @@ export const authService = {
 
   async logout() {
     const token = localStorage.getItem('authToken')
+    this.clearLocalSession()
     if (token) {
       try {
         await request<{ ok: true }>('/auth/logout', {
@@ -209,12 +210,9 @@ export const authService = {
           headers: { Authorization: `Bearer ${token}` },
         })
       } catch (error) {
-        if (!(error instanceof AuthApiError && [401, 403].includes(error.status))) {
-          throw error
-        }
+        console.warn('Server-side token revocation failed during sign out.', error)
       }
     }
-    this.clearLocalSession()
   },
 
   clearLocalSession() {

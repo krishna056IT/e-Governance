@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import multer from 'multer'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import { env } from '../config/env.mjs'
 import { requireAuth, requireRole } from '../middleware/auth.mjs'
 import { createApplicantDocument } from '../services/documentService.mjs'
@@ -18,11 +19,11 @@ const upload = multer({
 })
 
 function sendApplicationError(res, error) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
-  const message = status >= 500
-    ? 'Application service is temporarily unavailable.'
-    : error.message
+  const message = isDatabaseError
+    ? 'Application service is temporarily unavailable because the database connection failed.'
+    : status >= 500 ? 'Application request failed.' : error.message
   return res.status(status).json({ error: message })
 }
 

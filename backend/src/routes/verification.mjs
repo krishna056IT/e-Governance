@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import { requireAuth, requirePermission, requireRole } from '../middleware/auth.mjs'
 import {
   decideHumanVerification,
@@ -25,12 +26,12 @@ const requireHumanVerifierRole = [
 ]
 
 function sendVerificationError(res, error) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
   return res.status(status).json({
-    error: status >= 500
-      ? 'Human verification service is temporarily unavailable.'
-      : error.message,
+    error: isDatabaseError
+      ? 'Human verification is temporarily unavailable because the database connection failed.'
+      : status >= 500 ? 'Human verification request failed.' : error.message,
   })
 }
 

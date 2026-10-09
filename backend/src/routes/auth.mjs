@@ -15,13 +15,16 @@ import {
 import { requestPasswordReset, resetPassword } from '../services/passwordResetService.mjs'
 
 import { requireAuth, signToken } from '../middleware/auth.mjs'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 
 const router = Router()
 
 function sendAuthError(res, error, fallbackMessage) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
-  const message = status >= 500 ? fallbackMessage : error.message
+  const message = isDatabaseError
+    ? 'Authentication is temporarily unavailable because the database connection failed. Please try again.'
+    : status >= 500 ? fallbackMessage : error.message
   return res.status(status).json({ error: message })
 }
 

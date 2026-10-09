@@ -2,6 +2,7 @@ import { Router } from 'express'
 import mongoose from 'mongoose'
 import Application from '../models/Application.mjs'
 import { isDatabaseConnected } from '../config/database.mjs'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 
 const router = Router()
 const applicationIdPattern = /^[a-f\d]{24}$/i
@@ -15,7 +16,7 @@ router.post('/lookup', async (req, res) => {
     return res.status(400).json({ error: 'Enter a valid email address or Application ID.' })
   }
   if (!isDatabaseConnected()) {
-    return res.status(503).json({ error: 'Application status service is temporarily unavailable.' })
+    return res.status(503).json({ error: 'Application status is temporarily unavailable because the database connection failed.' })
   }
 
   try {
@@ -45,9 +46,12 @@ router.post('/lookup', async (req, res) => {
       })),
     })
   } catch (error) {
-    const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
-    return res.status(isDatabaseError ? 503 : 500).json({
-      error: 'Application status service is temporarily unavailable.',
+    const isDatabaseError = isDatabaseUnavailableError(error)
+    const status = error.statusCode || (isDatabaseError ? 503 : 500)
+    return res.status(status).json({
+      error: isDatabaseError
+        ? 'Application status is temporarily unavailable because the database connection failed.'
+        : status >= 500 ? 'Application status request failed.' : error.message,
     })
   }
 })

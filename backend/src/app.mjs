@@ -9,6 +9,8 @@ import officerRoutes from './routes/officer.mjs'
 import generalOfficerRoutes from './routes/generalOfficer.mjs'
 import verificationRoutes from './routes/verification.mjs'
 import chatRoutes from './routes/chat.mjs'
+import { isDatabaseReady } from './config/database.mjs'
+import { isDatabaseUnavailableError } from './config/databaseErrors.mjs'
 
 const app = express()
 
@@ -16,12 +18,14 @@ app.disable('x-powered-by')
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
-app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
+app.get('/health', async (_req, res) => {
+  const databaseConnected = await isDatabaseReady()
+  res.status(databaseConnected ? 200 : 503).json({
+    ok: databaseConnected,
     service: 'HacKBios backend',
     nodeEnv: env.NODE_ENV,
     ocrThreshold: env.OCR_THRESHOLD,
+    database: databaseConnected ? 'connected' : 'unavailable',
   })
 })
 
@@ -35,13 +39,15 @@ app.use('/api/general-officer', generalOfficerRoutes)
 app.use('/api/human-verification', verificationRoutes)
 app.use('/api/chat', chatRoutes)
 
-app.use((err, _req, res, _next) => {
-  const isDatabaseError = err?.name?.startsWith('Mongo') || err?.name?.startsWith('Mongoose')
-  const status = err?.statusCode || (isDatabaseError ? 503 : 500)
-  const message = status === 503
-    ? 'Authentication service is temporarily unavailable.'
-    : 'Internal server error.'
-  res.status(status).json({ error: message })
-})
+export function handleApiError(err, _req, res, _next) {
+  const isDatabaseError = isDatabaseUnavailableError(err)
+  const status = err?.statusCode || (isDatabaseError ? 503 : err?.type === 'entity.parse.failed' ? 400 : 500)
+  const message = isDatabaseError
+    ? 'The service is temporarily unavailable because the database cannot be reached. Please try again.'
+    : status < 500 ? err.message : status === 503 ? 'The service is temporarily unavailable.' : 'Internal server error.'
+  return res.status(status).json({ error: message })
+}
+
+app.use(handleApiError)
 
 export default app

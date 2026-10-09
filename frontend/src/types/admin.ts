@@ -73,6 +73,83 @@ export interface AdminStaffTaskHistory {
   demerit: { points: number; recordedAt: string } | null
 }
 
+export interface StaffPerformanceFilters {
+  period: 'TODAY' | '7_DAYS' | '30_DAYS' | '90_DAYS' | 'THIS_YEAR' | 'CUSTOM'
+  startDate?: string
+  endDate?: string
+  role: string
+  status: string
+  departmentId: string
+  staffId: string
+  search: string
+}
+
+export interface StaffPerformanceMetrics {
+  filters: {
+    period: StaffPerformanceFilters['period']
+    startDate: string
+    endDate: string
+    role: string
+    status: string
+    departmentId: string
+    staffId: string
+    search: string
+  }
+  options: {
+    roles: { value: string; label: string }[]
+    statuses: string[]
+    departments: { id: string; name: string }[]
+    assignees: { id: string; name: string; role: string }[]
+  }
+  kpis: {
+    totalStaff: number
+    openTasks: number
+    averageCompletionHours: number | null
+    deadlineCompliancePercentage: number | null
+    averageFirstResponseHours: number | null
+    completedTasks: number
+  }
+  pendingOverdueTasks: number
+  complianceByRole: { label: string; role: string; percentage: number | null; completed: number; onTime: number }[]
+  taskAging: { label: string; count: number }[]
+  leaderboard: {
+    rank: number
+    staffId: string
+    name: string
+    role: string
+    departmentId: string | null
+    department: string
+    completedTasks: number
+    averageCompletionHours: number | null
+    slaPercentage: number | null
+    pendingTasks: number
+    overdueTasks: number
+    demeritPoints: number
+  }[]
+  taskDistribution: {
+    label: string
+    role: string
+    assigned: number
+    completed: number
+    pending: number
+    overdue: number
+  }[]
+  performanceTrends: {
+    label: string
+    completedTasks: number
+    overdueTasks: number
+    deadlineCompliancePercentage: number | null
+  }[]
+  demeritAnalysis: {
+    staffId: string
+    label: string
+    role: string
+    overdueTasks: number
+    demeritPoints: number
+  }[]
+  taskCount: number
+}
+
 export type StaffRole = 'OFFICER' | 'GENERAL_OFFICER' | 'HUMAN_VERIFIER'
 export type AccountFilter = 'ALL' | 'OFFICER' | 'GENERAL_OFFICER' | 'HUMAN_VERIFIER' | 'APPLICANT' | 'ADMIN'
 

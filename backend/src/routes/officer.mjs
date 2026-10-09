@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { isDatabaseUnavailableError } from '../config/databaseErrors.mjs'
 import {
   requireAuth,
   requireOfficerPasswordChanged,
@@ -19,12 +20,12 @@ import {
 const router = Router()
 
 function sendOfficerError(res, error) {
-  const isDatabaseError = error?.name?.startsWith('Mongo') || error?.name?.startsWith('Mongoose')
+  const isDatabaseError = isDatabaseUnavailableError(error)
   const status = error.statusCode || (isDatabaseError ? 503 : 500)
   return res.status(status).json({
-    error: status >= 500
-      ? 'Officer review service is temporarily unavailable.'
-      : error.message,
+    error: isDatabaseError
+      ? 'Officer review is temporarily unavailable because the database connection failed.'
+      : status >= 500 ? 'Officer review request failed.' : error.message,
   })
 }
 
