@@ -17,6 +17,7 @@
     "@tesseract.js-data/eng": "^1.0.0",
     "@tesseract.js-data/hin": "^1.0.0",
     "bcryptjs": "^2.4.3",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.1",
     "express": "^4.21.2",
     "groq-sdk": "^0.37.0",
