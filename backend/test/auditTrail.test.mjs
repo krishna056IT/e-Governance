@@ -3,8 +3,7 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
-import { env } from '../src/config/env.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
 import AuditEvent from '../src/models/AuditEvent.mjs'
@@ -23,9 +22,7 @@ let applicantToken
 let verifier
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run audit trail integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for audit trail integration tests.')
+  await connectTestDatabase()
 
   const passwordHash = await bcrypt.hash('TestPassword123!', 10)
   ;[applicant, verifier] = await User.create([

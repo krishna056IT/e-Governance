@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 import { createCanvas } from '@napi-rs/canvas'
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { env } from '../src/config/env.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
@@ -25,9 +25,7 @@ let tokenA
 let tokenB
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run application integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for application integration tests.')
+  await connectTestDatabase()
 
   const passwordHash = await bcrypt.hash('TestPassword123!', 10)
   ;[applicantA, applicantB] = await User.create([

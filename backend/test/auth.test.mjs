@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { env } from '../src/config/env.mjs'
 import { requireAuth, requirePermission, requireRole, signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
@@ -15,13 +15,17 @@ const runId = `${process.pid}-${Date.now()}`
 const testEmails = []
 const testTokenIds = []
 const testApplicationIds = []
+const testMongoUri = process.env.MONGODB_TEST_URI
+const originalMongoUri = env.MONGODB_URI
 let server
 let baseUrl
 
-before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run authentication integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for authentication integration tests.')
+const authIntegrationTest = (name, run) => test(name, {
+  skip: !testMongoUri && 'MONGODB_TEST_URI is not configured.',
+}, run)
+
+if (testMongoUri) before(async () => {
+  await connectTestDatabase()
   server = app.listen(0)
   await new Promise((resolve, reject) => {
     server.once('listening', resolve)
@@ -32,7 +36,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${address.port}`
 })
 
-after(async () => {
+if (testMongoUri) after(async () => {
   if (testApplicationIds.length > 0) {
     await Application.deleteMany({ _id: { $in: testApplicationIds } })
   }
@@ -46,10 +50,11 @@ after(async () => {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   }
   await mongoose.disconnect()
+  env.MONGODB_URI = originalMongoUri
 })
 
 async function register(email, extra = {}) {
-  testEmails.push(email)
+  testEmails.push(email.trim().toLowerCase())
   return fetch(`${baseUrl}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -62,27 +67,48 @@ async function register(email, extra = {}) {
   })
 }
 
-test('registration persists an applicant with a bcrypt hash and never returns it', async () => {
-  const email = `applicant-${runId}@example.test`
+authIntegrationTest('registration persists an applicant with a bcrypt hash and never returns it', async () => {
+  const email = `Applicant-${runId}@Example.Test `
   const response = await register(email, { role: 'ADMIN' })
   const body = await response.json()
+  const normalizedEmail = email.trim().toLowerCase()
 
   assert.equal(response.status, 201)
-  assert.equal(body.user.email, email)
+  assert.equal(body.user.email, normalizedEmail)
   assert.equal(body.user.role, 'APPLICANT')
   assert.equal('passwordHash' in body.user, false)
   assert.equal(typeof body.token, 'string')
 
-  const storedUser = await User.findOne({ email }).lean()
+  const storedUser = await User.findOne({ email: normalizedEmail }).lean()
   assert.ok(storedUser)
   assert.notEqual(storedUser.passwordHash, 'TestPassword123!')
   assert.equal(await bcrypt.compare('TestPassword123!', storedUser.passwordHash), true)
 })
 
-test('registration rejects duplicate email addresses', async () => {
-  const email = `duplicate-${runId}@example.test`
+authIntegrationTest('registration rejects invalid email and missing required fields', async () => {
+  const invalidEmail = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'not-an-email',
+      password: 'TestPassword123!',
+      displayName: 'Test Applicant',
+    }),
+  })
+  assert.equal(invalidEmail.status, 400)
+
+  const missingFields = await fetch(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: '', password: '', displayName: '' }),
+  })
+  assert.equal(missingFields.status, 400)
+})
+
+authIntegrationTest('registration rejects duplicate email addresses', async () => {
+  const email = `Duplicate-${runId}@Example.Test `
   const firstResponse = await register(email)
-  const duplicateResponse = await register(email)
+  const duplicateResponse = await register(email.trim().toLowerCase())
 
   assert.equal(firstResponse.status, 201)
   assert.equal(duplicateResponse.status, 409)
@@ -91,14 +117,14 @@ test('registration rejects duplicate email addresses', async () => {
   })
 })
 
-test('login issues a JWT for a provisioned account and /me returns the database user safely', async () => {
+authIntegrationTest('login issues a JWT for a provisioned account and /me returns the database user safely', async () => {
   const email = `login-${runId}@example.test`
   const registrationResponse = await register(email)
   const registration = await registrationResponse.json()
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'TestPassword123!' }),
+    body: JSON.stringify({ email: registration.user.email.toUpperCase(), password: 'TestPassword123!' }),
   })
   const body = await response.json()
 
@@ -117,7 +143,7 @@ test('login issues a JWT for a provisioned account and /me returns the database 
   assert.equal('passwordHash' in me.user, false)
 })
 
-test('public status lookup returns only tracking details by email or Application ID without authenticating', async () => {
+authIntegrationTest('public status lookup returns only tracking details by email or Application ID without authenticating', async () => {
   const email = `status-access-${runId}@example.test`
   const registrationResponse = await register(email)
   const registration = await registrationResponse.json()
@@ -180,7 +206,7 @@ test('public status lookup returns only tracking details by email or Application
   assert.equal(invalidInput.status, 400)
 })
 
-test('password reset delivers a short-lived one-time link and changes the applicant password', async () => {
+authIntegrationTest('password reset delivers a short-lived one-time link and changes the applicant password', async () => {
   const email = `password-reset-${runId}@example.test`
   await register(email)
   const sentMessages = []
@@ -257,7 +283,7 @@ test('password reset delivers a short-lived one-time link and changes the applic
   }
 })
 
-test('invalid credentials and unauthenticated or invalid tokens are rejected', async () => {
+authIntegrationTest('invalid credentials and unauthenticated or invalid tokens are rejected', async () => {
   const email = `invalid-${runId}@example.test`
   await register(email)
   const badLogin = await fetch(`${baseUrl}/api/auth/login`, {
@@ -267,6 +293,20 @@ test('invalid credentials and unauthenticated or invalid tokens are rejected', a
   })
   assert.equal(badLogin.status, 401)
 
+  const unknownLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `unknown-${runId}@example.test`, password: 'WrongPassword123!' }),
+  })
+  assert.equal(unknownLogin.status, 401)
+
+  const missingCredentials = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  assert.equal(missingCredentials.status, 400)
+
   const missingToken = await fetch(`${baseUrl}/api/auth/me`)
   assert.equal(missingToken.status, 401)
   const invalidToken = await fetch(`${baseUrl}/api/auth/me`, {
@@ -275,7 +315,26 @@ test('invalid credentials and unauthenticated or invalid tokens are rejected', a
   assert.equal(invalidToken.status, 401)
 })
 
-test('logout revokes the current JWT so it cannot be reused', async () => {
+authIntegrationTest('inactive applicant accounts cannot authenticate', async () => {
+  const email = `inactive-${runId}@example.test`
+  testEmails.push(email)
+  const passwordHash = await bcrypt.hash('TestPassword123!', 10)
+  await User.create({
+    email,
+    displayName: 'Inactive Applicant',
+    passwordHash,
+    role: 'APPLICANT',
+    isActive: false,
+  })
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'TestPassword123!' }),
+  })
+  assert.equal(response.status, 401)
+})
+
+authIntegrationTest('logout revokes the current JWT so it cannot be reused', async () => {
   const email = `logout-${runId}@example.test`
   const registrationResponse = await register(email)
   const registration = await registrationResponse.json()
@@ -295,7 +354,7 @@ test('logout revokes the current JWT so it cannot be reused', async () => {
   assert.equal(meResponse.status, 401)
 })
 
-test('authentication middleware loads current role and permissions from MongoDB', async () => {
+authIntegrationTest('authentication middleware loads current role and permissions from MongoDB', async () => {
   const email = `verifier-${runId}@example.test`
   testEmails.push(email)
   const passwordHash = await bcrypt.hash('TestPassword123!', 10)
@@ -329,7 +388,7 @@ test('authentication middleware loads current role and permissions from MongoDB'
   assert.equal(unauthenticated.status, 401)
 })
 
-test('role and permission middleware reject actors without the required access', () => {
+authIntegrationTest('role and permission middleware reject actors without the required access', () => {
   const response = {
     status(code) {
       this.code = code

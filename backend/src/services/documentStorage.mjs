@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { env } from '../config/env.mjs'
 
 const defaultStorageDirectory = fileURLToPath(new URL('../../private-document-storage/', import.meta.url))
-const storageDirectory = path.resolve(defaultStorageDirectory)
+const storageDirectory = path.resolve(env.DOCUMENT_STORAGE_DIR || defaultStorageDirectory)
 const storageIdPattern = /^[0-9a-f-]{36}$/
 const extensions = new Set(['.pdf', '.png', '.jpg', '.txt'])
 

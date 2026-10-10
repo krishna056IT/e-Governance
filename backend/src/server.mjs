@@ -9,7 +9,7 @@ async function startServer() {
   startDatabaseConnectionMonitor()
   startOverdueStaffTaskProcessor()
   app.listen(port, () => {
-    console.log(`HacKBios backend running on http://localhost:${port}`)
+    console.log(`HacKBios backend listening on port ${port}`)
   })
 }
 

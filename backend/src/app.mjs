@@ -1,4 +1,5 @@
 import express from 'express'
+import cors from 'cors'
 import { env } from './config/env.mjs'
 import adminRoutes from './routes/admin.mjs'
 import authRoutes from './routes/auth.mjs'
@@ -15,6 +16,15 @@ import { isDatabaseUnavailableError } from './config/databaseErrors.mjs'
 const app = express()
 
 app.disable('x-powered-by')
+const allowedOrigins = new Set(env.CORS_ORIGINS)
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, !origin || allowedOrigins.has(origin))
+  },
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600,
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 

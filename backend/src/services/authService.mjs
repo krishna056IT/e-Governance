@@ -32,6 +32,8 @@ export function serializeUser(user) {
   delete safeUser.passwordHash
   delete safeUser.setupTokenHash
   delete safeUser.setupTokenExpiresAt
+  delete safeUser.passwordResetTokenHash
+  delete safeUser.passwordResetTokenExpiresAt
   delete safeUser.registrationAccessTokenHash
   delete safeUser.registrationAccessTokenExpiresAt
   if (safeUser._id && !safeUser.id) {

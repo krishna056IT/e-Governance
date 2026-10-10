@@ -2,8 +2,7 @@ import test, { after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import mongoose from 'mongoose'
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
-import { env } from '../src/config/env.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
 import AuditEvent from '../src/models/AuditEvent.mjs'
@@ -32,9 +31,7 @@ let verifier
 let admin
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run staff task integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for staff task integration tests.')
+  await connectTestDatabase()
 
   ;[applicant, officer, secondOfficer, verifier, admin] = await User.create([
     { email: `staff-task-applicant-${runId}@example.test`, displayName: 'Task Applicant', role: 'APPLICANT' },

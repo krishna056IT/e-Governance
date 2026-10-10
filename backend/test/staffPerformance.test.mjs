@@ -2,8 +2,7 @@ import test, { after, before } from 'node:test'
 import assert from 'node:assert/strict'
 import mongoose from 'mongoose'
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
-import { env } from '../src/config/env.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Department from '../src/models/Department.mjs'
 import Demerit from '../src/models/Demerit.mjs'
@@ -26,9 +25,7 @@ let verifier
 let applicant
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured for staff performance integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for staff performance tests.')
+  await connectTestDatabase()
 
   department = await Department.create({
     name: `Staff performance department ${runId}`,

@@ -7,8 +7,8 @@ import type {
   StaffPerformanceFilters,
   StaffPerformanceMetrics,
 } from '../types/admin'
+import { API_BASE_URL } from './apiBase'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 const GET_RETRY_DELAYS_MS = [500, 1500]
 
 interface ApiError {

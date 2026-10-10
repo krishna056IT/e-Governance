@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import mongoose from 'mongoose'
 
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { env } from '../src/config/env.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
@@ -31,9 +31,7 @@ let existingOfficer
 let existingOfficerToken
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run Officer registration integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for Officer registration integration tests.')
+  await connectTestDatabase()
   await GovernmentOfficerRegistry.init()
   await User.init()
 

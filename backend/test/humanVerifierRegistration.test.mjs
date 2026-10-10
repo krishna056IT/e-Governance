@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { env } from '../src/config/env.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Department from '../src/models/Department.mjs'
@@ -38,9 +38,7 @@ async function request(path, options = {}, token) {
 }
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured for Human Verifier registration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true)
+  await connectTestDatabase()
   env.NODE_ENV = 'development'
 
   const adminPasswordHash = await bcrypt.hash('HumanVerifierTestAdminPassword!', 10)

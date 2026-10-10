@@ -1,0 +1,10 @@
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://e-governance-backend-9a7h.onrender.com/api/:splat"
+  status = 200
+  force = true

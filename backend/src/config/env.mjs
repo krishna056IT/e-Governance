@@ -2,14 +2,27 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
+const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-me'
+const nodeEnv = process.env.NODE_ENV || 'development'
+if (nodeEnv === 'production' &&
+    (jwtSecret === 'dev-secret-change-me' || Buffer.byteLength(jwtSecret, 'utf8') < 32)) {
+  throw new Error('Production configuration requires a JWT_SECRET of at least 32 bytes.')
+}
+
 export const env = {
   PORT: Number(process.env.PORT || 4000),
-  NODE_ENV: process.env.NODE_ENV || 'development',
-  JWT_SECRET: process.env.JWT_SECRET || 'dev-secret-change-me',
+  NODE_ENV: nodeEnv,
+  JWT_SECRET: jwtSecret,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '8h',
   OCR_THRESHOLD: process.env.OCR_THRESHOLD || '90',
   OCR_LANGUAGES: process.env.OCR_LANGUAGES || 'eng+hin',
   MONGODB_URI: process.env.MONGODB_URI || '',
+  DOCUMENT_STORAGE_DIR: process.env.DOCUMENT_STORAGE_DIR || '',
+  CORS_ORIGINS: (process.env.CORS_ORIGINS ||
+    'http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || '',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
   MAX_UPLOAD_SIZE_BYTES: Number(process.env.MAX_UPLOAD_SIZE_BYTES || 10 * 1024 * 1024),

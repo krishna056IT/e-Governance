@@ -1,7 +1,5 @@
 import type { UserRecord, UserRole } from '../types'
-
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || '/api'
+import { API_BASE_URL } from './apiBase'
 
 interface AuthResponse {
   token: string
@@ -39,8 +37,11 @@ async function request<T>(
       headers,
     })
   } catch (error) {
-    if (networkErrorMessage && error instanceof TypeError) {
-      throw new AuthApiError(networkErrorMessage, 0)
+    if (error instanceof TypeError) {
+      throw new AuthApiError(
+        networkErrorMessage || 'Unable to connect to the service. Please try again.',
+        0,
+      )
     }
     throw error
   }

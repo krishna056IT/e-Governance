@@ -4,8 +4,7 @@ import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
-import { env } from '../src/config/env.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import AuditEvent from '../src/models/AuditEvent.mjs'
 import Application from '../src/models/Application.mjs'
@@ -24,9 +23,7 @@ let adminToken
 let department
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured to run admin integration tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true, 'MongoDB must be reachable for admin integration tests.')
+  await connectTestDatabase()
 
   server = app.listen(0)
   await new Promise((resolve, reject) => {

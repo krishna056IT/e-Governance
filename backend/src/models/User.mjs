@@ -124,6 +124,10 @@ userSchema.methods.toSafeObject = function toSafeObject() {
   delete user.passwordHash
   delete user.setupTokenHash
   delete user.setupTokenExpiresAt
+  delete user.passwordResetTokenHash
+  delete user.passwordResetTokenExpiresAt
+  delete user.registrationAccessTokenHash
+  delete user.registrationAccessTokenExpiresAt
   return user
 }
 

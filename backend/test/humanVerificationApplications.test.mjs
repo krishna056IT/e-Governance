@@ -4,8 +4,7 @@ import bcrypt from 'bcryptjs'
 import mongoose from 'mongoose'
 
 import app from '../src/app.mjs'
-import { connectDatabase, isDatabaseConnected } from '../src/config/database.mjs'
-import { env } from '../src/config/env.mjs'
+import { connectTestDatabase } from './helpers/mongodbTestDatabase.mjs'
 import { signToken } from '../src/middleware/auth.mjs'
 import Application from '../src/models/Application.mjs'
 import Department from '../src/models/Department.mjs'
@@ -22,9 +21,7 @@ let verifierToken
 let applicantToken
 
 before(async () => {
-  assert.ok(env.MONGODB_URI, 'MONGODB_URI must be configured for Human Verification application tests.')
-  await connectDatabase()
-  assert.equal(isDatabaseConnected(), true)
+  await connectTestDatabase()
 
   department = await Department.create({
     name: `Human Verification Department ${runId}`,

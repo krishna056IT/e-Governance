@@ -29,7 +29,7 @@ function logConnectionFailure(error, event = 'connection_attempt_failed') {
 
 mongoose.connection.on('connected', () => {
   if (previousReadyState !== 1) {
-    logDatabaseEvent('info', 'connected', { readyState: mongoose.connection.readyState })
+    console.info('MongoDB connected successfully')
   }
   previousReadyState = mongoose.connection.readyState
 })

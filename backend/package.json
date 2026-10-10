@@ -10,7 +10,7 @@
     "reset:admin": "node scripts/resetAdmin.mjs",
     "seed:departments": "node scripts/seedDepartments.mjs",
     "seed:officer-registry": "node scripts/seedOfficerRegistry.mjs",
-    "test": "node --test ./test/**/*.test.mjs"
+    "test": "node --test --test-concurrency=1 ./test/**/*.test.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.10",

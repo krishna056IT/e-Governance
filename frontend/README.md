@@ -24,8 +24,12 @@ npm run build
 npm run lint
 ```
 
-The Vite development server proxies `/api` to `http://localhost:4000`.
-Set `VITE_API_URL` when the backend is hosted at a different API URL.
+All frontend API clients use the same-origin `/api` base path. The Vite
+development server proxies `/api` to `http://localhost:4000`, and the Netlify
+redirect in the repository root proxies `/api/*` to the deployed backend.
+Do not set `VITE_API_URL`; it can bypass the production proxy. For Netlify
+deployments, `public/_redirects` rewrites deep links to the frontend entry
+point so React Router routes continue to work after refresh.
 
 ## Page areas
 
